@@ -21,7 +21,14 @@ from .representations.interplm import (
     load_interplm_sae,
     mean_pool_sae_activations,
 )
-from .esm_lora import load_lora_adapter, truncate_esm_encoder
+
+
+def load_lora_adapter(*_args, **_kwargs):
+    raise RuntimeError("ESM-LoRA surrogate support was removed from the minimal paper code.")
+
+
+def truncate_esm_encoder(*_args, **_kwargs):
+    raise RuntimeError("ESM truncation support was removed from the minimal paper code.")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
