@@ -101,10 +101,19 @@ def main():
         for task in TASKS
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.9), sharex=True)
+    n_tasks = len(TASKS)
+    ncols = min(4, n_tasks)
+    nrows = int(math.ceil(n_tasks / ncols))
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5.8 * ncols, 4.7 * nrows),
+        sharex=True,
+    )
+    axes_flat = np.atleast_1d(axes).ravel()
     legend_seen = set()
     summary = []
-    for ax, task in zip(axes, TASKS):
+    for ax, task in zip(axes_flat, TASKS):
         for method in methods_by_task[task]:
             x, y, e, counts = aggregate(method.root)
             valid = np.isfinite(y)
@@ -126,10 +135,12 @@ def main():
         ax.set_xlabel("Optimization round")
         ax.set_ylabel("Mean max fitness")
         ax.grid(True, axis="y")
+    for ax in axes_flat[n_tasks:]:
+        ax.axis("off")
 
-    fig.legend(loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.04), frameon=False)
-    fig.suptitle("K=128 ProSST vocabulary restriction ablation", fontsize=20, fontweight=600, y=1.13)
-    fig.tight_layout(rect=[0, 0, 1, 0.98])
+    fig.legend(loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.02), frameon=False)
+    fig.suptitle("K=128 ProSST vocabulary restriction ablation", fontsize=20, fontweight=600, y=1.05)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "prosst_restricted_vs_unrestricted_vocab_k128_mean_max.png"
