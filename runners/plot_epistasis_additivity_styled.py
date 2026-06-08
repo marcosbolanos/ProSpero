@@ -48,16 +48,16 @@ def corr(x, y):
 def plot_scatter(results):
     set_prospero_style()
     plt.rcParams.update({
-        "axes.titlesize": 15,
-        "axes.labelsize": 13,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
-        "legend.fontsize": 12,
+        "axes.titlesize": 30,
+        "axes.labelsize": 26,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
+        "legend.fontsize": 24,
     })
     n_tasks = len(results)
-    n_cols = 3
+    n_cols = 2
     n_rows = int(math.ceil(n_tasks / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16.5, 4.25 * n_rows), sharex=False, sharey=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(24.0, 7.2 * n_rows), sharex=False, sharey=False)
     axes_flat = np.atleast_1d(axes).reshape(-1)
 
     for idx, task_result in enumerate(results):
@@ -82,24 +82,24 @@ def plot_scatter(results):
             transform=ax.transAxes,
             ha="right",
             va="bottom",
-            fontsize=10.5,
+            fontsize=21,
             color=COLORS["muted"],
         )
 
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.suptitle("Oracle additivity of sampled double mutants", fontsize=22, fontweight=600, y=1.012)
+    fig.suptitle("Oracle additivity of sampled double mutants", fontsize=44, fontweight=600, y=0.988)
     fig.text(
         0.5,
-        0.985,
+        0.962,
         r"Each point compares the observed oracle fitness change of a double mutant to the sum of its two single-mutant effects.",
         ha="center",
         va="top",
-        fontsize=13,
+        fontsize=26,
         color=COLORS["muted"],
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.91, wspace=0.42, hspace=0.52)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_additivity_oracle_scatter.png"
     pdf = OUT / "epistasis_additivity_oracle_scatter.pdf"
@@ -112,15 +112,15 @@ def plot_scatter(results):
 def plot_histograms(results):
     set_prospero_style()
     plt.rcParams.update({
-        "axes.titlesize": 15,
-        "axes.labelsize": 13,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
+        "axes.titlesize": 30,
+        "axes.labelsize": 26,
+        "xtick.labelsize": 22,
+        "ytick.labelsize": 22,
     })
     n_tasks = len(results)
-    n_cols = 3
+    n_cols = 2
     n_rows = int(math.ceil(n_tasks / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16.5, 4.0 * n_rows), sharex=False, sharey=False)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(24.0, 6.9 * n_rows), sharex=False, sharey=False)
     axes_flat = np.atleast_1d(axes).reshape(-1)
 
     for idx, task_result in enumerate(results):
@@ -152,15 +152,15 @@ def plot_histograms(results):
             transform=ax.transAxes,
             ha="right",
             va="top",
-            fontsize=10.5,
+            fontsize=21,
             color=COLORS["muted"],
         )
 
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.suptitle("Oracle epistasis distributions", fontsize=22, fontweight=600, y=1.012)
-    fig.tight_layout(rect=[0, 0, 1, 0.965])
+    fig.suptitle("Oracle epistasis distributions", fontsize=44, fontweight=600, y=0.988)
+    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.93, wspace=0.38, hspace=0.50)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_distributions_oracle_histograms.png"
     pdf = OUT / "epistasis_distributions_oracle_histograms.pdf"

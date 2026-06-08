@@ -171,7 +171,7 @@ def add_zoom_inset(ax, series: list[tuple[Method, np.ndarray, np.ndarray, np.nda
     axins.set_xlim(x_min, x_max)
     axins.set_ylim(y_min - pad, y_max + pad)
     axins.set_xticks([3, 6, 10])
-    axins.tick_params(axis="both", labelsize=8.5, length=2.5, pad=1.5)
+    axins.tick_params(axis="both", labelsize=17, length=2.5, pad=1.5)
     axins.grid(True, axis="y", linewidth=0.55, alpha=0.55)
     for spine in axins.spines.values():
         spine.set_edgecolor(COLORS["muted"])
@@ -190,13 +190,13 @@ def add_zoom_inset(ax, series: list[tuple[Method, np.ndarray, np.ndarray, np.nda
 def plot_budget(budget: int):
     set_prospero_style()
     plt.rcParams.update({
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 14,
+        "axes.titlesize": 32,
+        "axes.labelsize": 28,
+        "xtick.labelsize": 24,
+        "ytick.labelsize": 24,
+        "legend.fontsize": 28,
     })
-    fig, axes = plt.subplots(2, 4, figsize=(18.5, 10.2), sharex=True)
+    fig, axes = plt.subplots(2, 4, figsize=(30.0, 16.0), sharex=True)
     legend_seen = set()
     summary = []
     zoom_summary = []
@@ -250,8 +250,8 @@ def plot_budget(budget: int):
         handles.extend(h)
         labels.extend(l)
     fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.0), frameon=False)
-    fig.suptitle(f"K={budget} mean-max fitness trajectories", fontsize=23, fontweight="semibold", y=1.045)
-    fig.subplots_adjust(left=0.055, right=0.99, bottom=0.08, top=0.86, wspace=0.18, hspace=0.34)
+    fig.suptitle(f"K={budget} mean-max fitness trajectories", fontsize=46, fontweight="semibold", y=1.045)
+    fig.subplots_adjust(left=0.07, right=0.985, bottom=0.09, top=0.84, wspace=0.42, hspace=0.42)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / f"zero_shotprot_vs_prospero_k{budget}_mean_max.png"
     pdf = OUT / f"zero_shotprot_vs_prospero_k{budget}_mean_max.pdf"
