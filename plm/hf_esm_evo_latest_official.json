@@ -1,0 +1,495 @@
+{
+  "generated_at_utc": "2026-04-24T08:44:04.573955+00:00",
+  "source": "src/prospero/plm/hf_esm_evo_models_latest.json",
+  "description": "Official/trusted ESM+Evo models sorted by recency.",
+  "trusted_prefixes": [
+    "facebook/",
+    "EvolutionaryScale/",
+    "nvidia/",
+    "togethercomputer/",
+    "evo-design/"
+  ],
+  "count": 19,
+  "models": [
+    {
+      "model_id": "nvidia/esm2_t48_15B_UR50D",
+      "family": "esm2",
+      "downloads": 6869,
+      "likes": 8,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-08T03:22:27+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "nvidia/esm2_t36_3B_UR50D",
+      "family": "esm2",
+      "downloads": 2536,
+      "likes": 5,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-08T03:19:21+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "nvidia/esm2_t33_650M_UR50D",
+      "family": "esm2",
+      "downloads": 4595,
+      "likes": 3,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-08T03:18:34+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "nvidia/esm2_t30_150M_UR50D",
+      "family": "esm2",
+      "downloads": 49,
+      "likes": 2,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-08T03:18:18+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "nvidia/esm2_t12_35M_UR50D",
+      "family": "esm2",
+      "downloads": 344,
+      "likes": 2,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-08T03:18:05+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "nvidia/esm2_t6_8M_UR50D",
+      "family": "esm2",
+      "downloads": 260,
+      "likes": 7,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "custom_code",
+        "fill-mask",
+        "license:mit",
+        "nv_esm",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2026-04-06T17:40:42+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "evo-design/evo-1-7b-131k-microviridae",
+      "family": "evo",
+      "downloads": 5,
+      "likes": 0,
+      "pipeline_tag": null,
+      "library_name": null,
+      "private": false,
+      "gated": false,
+      "tags": [
+        "biology",
+        "deep signal processing",
+        "genomics",
+        "hybrid",
+        "license:apache-2.0",
+        "long context",
+        "microviridae",
+        "phage",
+        "pytorch",
+        "region:us",
+        "stripedhyena"
+      ],
+      "last_modified": "2025-09-12T06:22:39+00:00",
+      "search_hits": [
+        "evo"
+      ]
+    },
+    {
+      "model_id": "evo-design/evo-1.5-8k-base",
+      "family": "evo",
+      "downloads": 350,
+      "likes": 1,
+      "pipeline_tag": null,
+      "library_name": null,
+      "private": false,
+      "gated": false,
+      "tags": [
+        "biology",
+        "custom_code",
+        "deep signal processing",
+        "genomics",
+        "hybrid",
+        "license:apache-2.0",
+        "long context",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "stripedhyena"
+      ],
+      "last_modified": "2025-07-12T22:40:21+00:00",
+      "search_hits": [
+        "evo"
+      ]
+    },
+    {
+      "model_id": "EvolutionaryScale/esm3-sm-open-v1",
+      "family": "esm3",
+      "downloads": 4678,
+      "likes": 284,
+      "pipeline_tag": null,
+      "library_name": "transformers",
+      "private": false,
+      "gated": "auto",
+      "tags": [
+        "biology",
+        "en",
+        "endpoints_compatible",
+        "esm",
+        "protein",
+        "region:us",
+        "transformers"
+      ],
+      "last_modified": "2025-01-29T18:03:24+00:00",
+      "search_hits": [
+        "esm",
+        "esm3",
+        "evo"
+      ]
+    },
+    {
+      "model_id": "EvolutionaryScale/esmc-600m-2024-12",
+      "family": "esmc",
+      "downloads": 920,
+      "likes": 32,
+      "pipeline_tag": null,
+      "library_name": null,
+      "private": false,
+      "gated": false,
+      "tags": [
+        "biology",
+        "en",
+        "esm",
+        "protein",
+        "region:us"
+      ],
+      "last_modified": "2024-12-27T16:50:32+00:00",
+      "search_hits": [
+        "esm",
+        "esmc",
+        "evo"
+      ]
+    },
+    {
+      "model_id": "EvolutionaryScale/esmc-300m-2024-12",
+      "family": "esmc",
+      "downloads": 9399,
+      "likes": 29,
+      "pipeline_tag": null,
+      "library_name": null,
+      "private": false,
+      "gated": false,
+      "tags": [
+        "biology",
+        "en",
+        "esm",
+        "protein",
+        "region:us"
+      ],
+      "last_modified": "2024-12-27T16:50:06+00:00",
+      "search_hits": [
+        "esm",
+        "esmc",
+        "evo"
+      ]
+    },
+    {
+      "model_id": "facebook/esm-1b",
+      "family": "esm1",
+      "downloads": 1928,
+      "likes": 17,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "transformers"
+      ],
+      "last_modified": "2023-09-07T15:41:19+00:00",
+      "search_hits": [
+        "esm"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t6_8M_UR50D",
+      "family": "esm2",
+      "downloads": 736393,
+      "likes": 34,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2023-03-21T15:05:17+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t33_650M_UR50D",
+      "family": "esm2",
+      "downloads": 1658255,
+      "likes": 77,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2023-03-21T15:05:12+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t30_150M_UR50D",
+      "family": "esm2",
+      "downloads": 131614,
+      "likes": 10,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2023-03-21T15:05:03+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t12_35M_UR50D",
+      "family": "esm2",
+      "downloads": 175670,
+      "likes": 21,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "safetensors",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2023-03-21T15:04:57+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "facebook/esm1b_t33_650M_UR50S",
+      "family": "esm1",
+      "downloads": 3646,
+      "likes": 22,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "arxiv:1603.05027",
+        "arxiv:1810.04805",
+        "arxiv:1907.11692",
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2022-12-02T14:40:11+00:00",
+      "search_hits": [
+        "esm"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t36_3B_UR50D",
+      "family": "esm2",
+      "downloads": 639921,
+      "likes": 28,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "tf",
+        "transformers"
+      ],
+      "last_modified": "2022-12-01T20:22:22+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    },
+    {
+      "model_id": "facebook/esm2_t48_15B_UR50D",
+      "family": "esm2",
+      "downloads": 2002,
+      "likes": 28,
+      "pipeline_tag": "fill-mask",
+      "library_name": "transformers",
+      "private": false,
+      "gated": false,
+      "tags": [
+        "deploy:azure",
+        "endpoints_compatible",
+        "esm",
+        "fill-mask",
+        "license:mit",
+        "pytorch",
+        "region:us",
+        "transformers"
+      ],
+      "last_modified": "2022-12-01T18:12:44+00:00",
+      "search_hits": [
+        "esm",
+        "esm2"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "generated_at_utc": "2026-04-24T09:32:24.615476+00:00",
+  "device": "cuda",
+  "sequence": "MKTIIALSYIFCLVFADYKDDDDA",
+  "inventory_json": "src/prospero/plm/hf_esm_evo_models_latest.json",
+  "max_models": 30,
+  "reports": [
+    {
+      "model_id": "EvolutionaryScale/esm3-sm-open-v1",
+      "device": "cuda",
+      "trust_remote_code": true,
+      "status": "error",
+      "error": "Model load failed. AutoModel(use_safetensors=True): Unrecognized model in EvolutionaryScale/esm3-sm-open-v1. Should have a `model_type` key in its config.json. | AutoModel(use_safetensors=None): Unrecognized model in EvolutionaryScale/esm3-sm-open-v1. Should have a `model_type` key in its config.json. | AutoModelForMaskedLM(use_safetensors=True): Unrecognized model in EvolutionaryScale/esm3-sm-open-v1. Should have a `model_type` key in its config.json. | AutoModelForMaskedLM(use_safetensors=None): Unrecognized model in EvolutionaryScale/esm3-sm-open-v1. Should have a `model_type` key in its config.json.",
+      "timings_sec": {
+        "total": 6.002589609473944
+      },
+      "family": "esm3",
+      "downloads": 4678
+    }
+  ]
+}

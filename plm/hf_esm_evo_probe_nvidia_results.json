@@ -1,0 +1,57 @@
+{
+  "generated_at_utc": "2026-04-24T08:47:27.850311+00:00",
+  "device": "cuda",
+  "sequence": "MKTIIALSYIFCLVFADYKDDDDA",
+  "inventory_json": "src/prospero/plm/hf_esm_evo_models_latest.json",
+  "max_models": 30,
+  "reports": [
+    {
+      "model_id": "nvidia/esm2_t33_650M_UR50D",
+      "device": "cuda",
+      "trust_remote_code": true,
+      "status": "error",
+      "error": "Model load failed. AutoModel(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModel(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib.",
+      "timings_sec": {
+        "total": 2.3483418691903353
+      },
+      "family": "esm2",
+      "downloads": 4595
+    },
+    {
+      "model_id": "nvidia/esm2_t30_150M_UR50D",
+      "device": "cuda",
+      "trust_remote_code": true,
+      "status": "error",
+      "error": "Model load failed. AutoModel(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModel(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib.",
+      "timings_sec": {
+        "total": 2.217029532417655
+      },
+      "family": "esm2",
+      "downloads": 49
+    },
+    {
+      "model_id": "nvidia/esm2_t12_35M_UR50D",
+      "device": "cuda",
+      "trust_remote_code": true,
+      "status": "error",
+      "error": "Model load failed. AutoModel(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModel(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib.",
+      "timings_sec": {
+        "total": 2.1506869196891785
+      },
+      "family": "esm2",
+      "downloads": 344
+    },
+    {
+      "model_id": "nvidia/esm2_t6_8M_UR50D",
+      "device": "cuda",
+      "trust_remote_code": true,
+      "status": "error",
+      "error": "Model load failed. AutoModel(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModel(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=True): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib. | AutoModelForMaskedLM(use_safetensors=None): Found empty `transformer-engine` meta package installed. Install `transformer-engine` with framework extensions via'pip3 install --no-build-isolation transformer-engine[pytorch,jax]==VERSION' or 'pip3 install transformer-engine[core]` for the TE core lib only. The `core_cu12` or `core_cu13` extra deps can be used to specify CUDA version for the TE core lib.",
+      "timings_sec": {
+        "total": 2.175767047330737
+      },
+      "family": "esm2",
+      "downloads": 260
+    }
+  ]
+}
