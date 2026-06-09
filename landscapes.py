@@ -90,6 +90,7 @@ class TAPELandscape:
         self.tokenizer = tape.TAPETokenizer(vocab='iupac')
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.to(self.device)
+        self.model.eval()
 
     @torch.no_grad()
     def get_fitness(self, sequences):

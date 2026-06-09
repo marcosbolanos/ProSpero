@@ -40,12 +40,12 @@ EVODIFF_ROOTS = {
 }
 
 PROSST_ROOTS = {
-    8: ROOT / "outputs/prosst_ft_all_landscapes_n8_rank_cluster_20260603",
-    128: ROOT / "outputs/prosst_ft_all_landscapes_n128_rank_cluster_20260603",
+    8: ROOT / "outputs/prosst_ft_all_landscapes_n8_grpo_cluster_20260604",
+    128: ROOT / "outputs/prosst_ft_all_landscapes_n128_grpo_cluster_20260604",
 }
 
 ZOOM_INSET_TASKS = {
-    8: {"GFP", "AMIE", "UBE2I"},
+    8: {"GFP", "AMIE", "TEM", "UBE2I"},
     128: {"TEM"},
 }
 
@@ -62,12 +62,13 @@ class Method:
 
 
 INCLUDE_EVODIFF = True
+PROSST_LABEL = "0shotProt GRPO (w/ ProSST)"
 
 
 def methods_for(task: str, budget: int) -> list[Method]:
     ev_root, ev_strategy = EVODIFF_ROOTS[task]
     methods = [
-        Method("0shotProt (w/ ProSST)", COLORS["prosst"], "s", 2.7, "prosst", PROSST_ROOTS[budget], None),
+        Method(PROSST_LABEL, COLORS["prosst"], "s", 2.7, "prosst", PROSST_ROOTS[budget], None),
     ]
     if INCLUDE_EVODIFF:
         methods.append(Method("0shotProt (w/ EvoDiff)", COLORS["evodiff"], "^", 2.7, "standard", ev_root, ev_strategy))
@@ -268,16 +269,18 @@ def parse_args():
     parser.add_argument("--output-dir", default=str(OUT))
     parser.add_argument("--prosst-k8-root", default=None)
     parser.add_argument("--prosst-k128-root", default=None)
+    parser.add_argument("--prosst-label", default=PROSST_LABEL)
     parser.add_argument("--prospero-results-dir", default=None)
     parser.add_argument("--no-evodiff", action="store_true", default=False)
     return parser.parse_args()
 
 
 def main():
-    global OUT, INCLUDE_EVODIFF
+    global OUT, INCLUDE_EVODIFF, PROSST_LABEL
     args = parse_args()
     OUT = Path(args.output_dir)
     INCLUDE_EVODIFF = not args.no_evodiff
+    PROSST_LABEL = args.prosst_label
     if args.prosst_k8_root is not None:
         PROSST_ROOTS[8] = Path(args.prosst_k8_root)
     if args.prosst_k128_root is not None:

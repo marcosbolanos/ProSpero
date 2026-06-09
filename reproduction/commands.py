@@ -70,6 +70,7 @@ def zero_shot_base(stage: ZeroShotStage, out: Path, task: str, seed: int, budget
         "--device",
         "cuda",
         "--debug_generation_trace",
+        "--full_deterministic",
         "--smc_vocab",
         stage.smc_vocab,
     ]
@@ -145,8 +146,6 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
     main_zero_shot_stage = None
     if "grpo_cluster" in stage_names:
         main_zero_shot_stage = "grpo_cluster"
-    elif "rank_cluster" in stage_names:
-        main_zero_shot_stage = "rank_cluster"
 
     if main_zero_shot_stage is not None and "prospero_cnn_variable_k" in stage_names:
         commands.append((

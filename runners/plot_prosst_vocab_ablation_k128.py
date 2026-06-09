@@ -15,14 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "outputs" / "rl_vs_og" / "prosst_vocab_ablation_k128"
 TASKS = ["AAV", "LGK"]
 
-RESTRICTED = {
-    "AAV": ROOT / "outputs/prosst_ft_all_landscapes_n128_rank_cluster_20260603/AAV",
-    "LGK": ROOT / "outputs/prosst_ft_all_landscapes_n128_rank_cluster_20260603/LGK",
-}
-UNRESTRICTED = {
-    "AAV": ROOT / "outputs/prosst_ft_reward_vocab_ablation_AAV_n128_20260603/full_vocab_rank/AAV",
-    "LGK": ROOT / "outputs/prosst_ft_reward_vocab_ablation_LGK_n128_20260603/full_vocab_rank/LGK",
-}
+RESTRICTED = {}
+UNRESTRICTED = {}
 
 
 @dataclass(frozen=True)
@@ -85,6 +79,12 @@ def main():
         base = Path(args.unrestricted_root)
         for task in TASKS:
             UNRESTRICTED[task] = base / task
+    missing = [task for task in TASKS if task not in RESTRICTED or task not in UNRESTRICTED]
+    if missing:
+        raise ValueError(
+            "Explicit --restricted-root and --unrestricted-root are required; "
+            f"missing task roots for: {', '.join(missing)}"
+        )
     set_prospero_style()
     plt.rcParams.update({
         "axes.titlesize": 17,

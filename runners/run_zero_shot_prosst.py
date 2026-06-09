@@ -19,6 +19,7 @@ from prospero.dataset import RegressionDataset
 from prospero.experiment_tracker import ExperimentTracker
 from prospero.experiments_config import ALPHABETS, WT_SEQUENCES
 from prospero.landscapes import get_landscape
+from prospero.search.prosst_puct import decode_with_puct
 from prospero.utils import get_new_starting_seq, set_seed
 
 
@@ -79,6 +80,9 @@ def get_parser():
             "outside the original residue's alphabet cluster before sampling."
         ),
     )
+    p.add_argument("--decode_strategy", choices=["sample", "mcts"], default="sample")
+    p.add_argument("--mcts_simulations", type=int, default=64)
+    p.add_argument("--mcts_c_puct", type=float, default=1.5)
     p.add_argument("--model_path", default="AI4Protein/ProSST-2048")
     p.add_argument("--structure_tokens_dir", default=str(STRUCTURE_TOKENS_DIR))
     p.add_argument("--structure_vocab_size", default="2048")
@@ -93,12 +97,11 @@ def get_parser():
     p.add_argument("--finetune_after_final", action="store_true", default=False)
     p.add_argument(
         "--reward_mode",
-        choices=["rank", "grpo_advantage", "standardized_advantage", "bottom_quantile_negative"],
-        default="rank",
+        choices=["grpo_advantage"],
+        default="grpo_advantage",
     )
     p.add_argument("--advantage_clip", type=float, default=2.0)
     p.add_argument("--negative_weight", type=float, default=0.25)
-    p.add_argument("--bottom_quantile", type=float, default=0.25)
     p.add_argument("--full_deterministic", action="store_true", default=False)
     return p
 
@@ -137,65 +140,21 @@ def tokenize_structure_tokens(tokens, device):
     return torch.tensor([[1, *shifted, 2]], dtype=torch.long, device=device)
 
 
-def normalized_rank_weights(scores):
+def grpo_advantage_weights(scores, clip=2.0):
     scores = np.asarray(scores, dtype=float)
-    if scores.size == 0:
-        raise ValueError("Cannot rank an empty score list.")
-    order = np.argsort(scores, kind="mergesort")
-    ranks = np.empty(scores.size, dtype=float)
-    ranks[order] = np.arange(scores.size, dtype=float)
-    if scores.size == 1:
-        return np.ones(1, dtype=np.float32)
-    return (ranks / float(scores.size - 1)).astype(np.float32)
-
-
-def reward_weights(scores, mode, baseline=None, clip=2.0, bottom_quantile=0.25):
-    scores = np.asarray(scores, dtype=float)
-    if mode == "rank":
-        weights = normalized_rank_weights(scores)
-        metadata = {
-            "reward_mode": "rank",
-            "weight_min": float(np.min(weights)),
-            "weight_max": float(np.max(weights)),
-            "weight_mean": float(np.mean(weights)),
-        }
-        return weights, metadata
     if scores.size == 0:
         raise ValueError("Cannot compute rewards for an empty score list.")
-    if mode == "grpo_advantage":
-        center = float(np.mean(scores))
-        scale = float(np.std(scores))
-        baseline_mode = "group_mean"
-    elif mode == "standardized_advantage":
-        center = float(baseline)
-        scale = float(np.std(scores))
-        baseline_mode = "moving_starting_sequence"
-    elif mode == "bottom_quantile_negative":
-        weights = normalized_rank_weights(scores).astype(np.float32)
-        threshold = float(np.quantile(scores, bottom_quantile))
-        weights[scores <= threshold] = -1.0
-        return weights, {
-            "reward_mode": mode,
-            "baseline": threshold,
-            "baseline_mode": f"bottom_quantile_{bottom_quantile:g}",
-            "bottom_quantile": float(bottom_quantile),
-            "weight_min": float(np.min(weights)),
-            "weight_max": float(np.max(weights)),
-            "weight_mean": float(np.mean(weights)),
-            "frac_negative": float(np.mean(weights < 0)),
-        }
-    else:
-        raise ValueError(f"Unsupported reward mode: {mode}")
-
+    center = float(np.mean(scores))
+    scale = float(np.std(scores))
     if not np.isfinite(scale) or scale <= 1e-8:
         scale = 1.0
     weights = (scores - center) / scale
     if clip is not None:
         weights = np.clip(weights, -float(clip), float(clip))
     return weights.astype(np.float32), {
-        "reward_mode": mode,
+        "reward_mode": "grpo_advantage",
         "baseline": center,
-        "baseline_mode": baseline_mode,
+        "baseline_mode": "group_mean",
         "scale": scale,
         "weight_min": float(np.min(weights)),
         "weight_max": float(np.max(weights)),
@@ -466,6 +425,8 @@ class ProSSTGenerator:
         masks, entropy_metadata = self.sample_masks(starting_sequence, batch_size)
         covered_start = starting_sequence[: self.covered_length]
         fixed_tail = starting_sequence[self.covered_length :]
+        if self.args.decode_strategy == "mcts":
+            return self.generate_batch_mcts(covered_start, fixed_tail, masks)
         seqs = [list(covered_start) for _ in range(batch_size)]
         scores = np.zeros(batch_size, dtype=np.float64)
         lls = np.zeros(batch_size, dtype=np.float64)
@@ -527,6 +488,57 @@ class ProSSTGenerator:
                 inv_perplexity=float(np.exp(ll / max(1, self.args.mask_budget))),
             )
         return out, scores
+
+    @torch.inference_mode()
+    def generate_batch_mcts(self, covered_start, fixed_tail, masks):
+        out = []
+        scores = []
+        lls = []
+        for particle, mask in enumerate(masks):
+            final_state, summary = decode_with_puct(
+                self,
+                covered_start,
+                mask,
+                simulations=int(self.args.mcts_simulations),
+                c_puct=float(self.args.mcts_c_puct),
+            )
+            sequence = "".join(final_state.sequence) + fixed_tail
+            out.append(sequence)
+            scores.append(float(final_state.score))
+            lls.append(float(final_state.log_likelihood))
+            self.trace_event(
+                "mcts_summary",
+                particle=int(particle),
+                mask_positions=[int(pos) for pos in mask],
+                **summary,
+            )
+            for step_idx, (pos, action) in enumerate(zip(mask, final_state.steps), start=1):
+                self.trace_event(
+                    "smc_step",
+                    particle=int(particle),
+                    step=int(step_idx),
+                    position=int(pos),
+                    distribution="full_20aa" if self.args.smc_vocab == "full" else "constrained_cluster",
+                    decode_strategy="mcts",
+                    non_cluster_logit_penalty=float(self.args.non_cluster_logit_penalty),
+                    sampled=action.aa,
+                    original=covered_start[int(pos)],
+                    logp_sampled=float(action.logp_sampled),
+                    logp_original=float(action.logp_original),
+                    log_delta=float(action.log_delta),
+                    full_vocab_logp_sampled=float(action.full_vocab_logp),
+                )
+            self.trace_event(
+                "candidate",
+                stage="terminal_mcts",
+                smc_step=len(mask),
+                candidate=int(particle),
+                sequence=sequence,
+                zero_shot_score=float(final_state.score),
+                log_likelihood=float(final_state.log_likelihood),
+                inv_perplexity=float(np.exp(final_state.log_likelihood / max(1, len(mask)))),
+            )
+        return out, np.asarray(scores, dtype=np.float64)
 
     def get_top_sequences(self, candidates, candidate_scores, n_queries, ref_sequences):
         ref = set("".join(str(x) for x in seq) for seq in ref_sequences)
@@ -591,10 +603,8 @@ class ProSSTGenerator:
         lambda_kl,
         batch_size,
         mask_budget,
-        reward_mode="rank",
-        baseline=None,
+        reward_mode="grpo_advantage",
         negative_weight=0.25,
-        bottom_quantile=0.25,
         advantage_clip=2.0,
     ):
         if self.base_model is None:
@@ -607,12 +617,11 @@ class ProSSTGenerator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         metrics_path = output_dir / "prosst_finetune_metrics.jsonl"
-        weights, reward_metadata = reward_weights(
+        if reward_mode != "grpo_advantage":
+            raise ValueError(f"Unsupported reward_mode={reward_mode!r}; only grpo_advantage is supported.")
+        weights, reward_metadata = grpo_advantage_weights(
             scores,
-            reward_mode,
-            baseline=baseline,
             clip=advantage_clip,
-            bottom_quantile=bottom_quantile,
         )
         order = np.arange(len(sequences))
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr)
@@ -654,20 +663,13 @@ class ProSSTGenerator:
                 probs = log_probs.exp()
                 kl = (probs * (log_probs - base_log_probs)).sum(dim=-1)
 
-                if reward_mode == "rank":
-                    weight = batch["weights"].clamp_min(0.0)
-                    denom = weight.sum().clamp_min(1e-12)
-                    nll_loss = (nll * weight).sum() / denom
-                    effective_positive_weight = float(weight.mean().detach().cpu())
-                    effective_negative_weight = 0.0
-                else:
-                    pos_weight = batch["weights"].clamp_min(0.0)
-                    neg_weight = (-batch["weights"]).clamp_min(0.0)
-                    signed_weight = pos_weight - float(negative_weight) * neg_weight
-                    nll_loss = (nll * signed_weight).mean()
-                    weight = batch["weights"]
-                    effective_positive_weight = float(pos_weight.mean().detach().cpu())
-                    effective_negative_weight = float(neg_weight.mean().detach().cpu())
+                pos_weight = batch["weights"].clamp_min(0.0)
+                neg_weight = (-batch["weights"]).clamp_min(0.0)
+                signed_weight = pos_weight - float(negative_weight) * neg_weight
+                nll_loss = (nll * signed_weight).mean()
+                weight = batch["weights"]
+                effective_positive_weight = float(pos_weight.mean().detach().cpu())
+                effective_negative_weight = float(neg_weight.mean().detach().cpu())
                 kl_loss = kl.mean()
                 loss = nll_loss + float(lambda_kl) * kl_loss
                 loss.backward()
@@ -762,7 +764,10 @@ def run_seed(args):
             "note": generator.mapping.note,
         },
         "generation": {
-            "mode": "no_rollout_sequential",
+            "mode": "no_rollout_sequential" if args.decode_strategy == "sample" else "puct_mcts_no_rollout",
+            "decode_strategy": args.decode_strategy,
+            "mcts_simulations": args.mcts_simulations,
+            "mcts_c_puct": args.mcts_c_puct,
             "mask_strategy": args.mask_strategy,
             "mask_budget": args.mask_budget,
             "smc_vocab": args.smc_vocab,
@@ -773,7 +778,7 @@ def run_seed(args):
         },
         "prosst_finetuning": {
             "enabled": bool(args.finetune_prosst),
-            "objective": "rank_weighted_masked_token_nll_plus_kl_current_to_frozen_base",
+            "objective": "grpo_advantage_weighted_masked_token_nll_plus_kl_current_to_frozen_base",
             "training_corruption": "uniform random fixed-budget masks",
             "mask_budget": args.mask_budget,
             "epochs_per_round": args.finetune_epochs,
@@ -783,7 +788,6 @@ def run_seed(args):
             "replay": args.finetune_replay,
             "reward_mode": args.reward_mode,
             "negative_weight": args.negative_weight,
-            "bottom_quantile": args.bottom_quantile,
             "advantage_clip": args.advantage_clip,
         },
     }
@@ -795,12 +799,6 @@ def run_seed(args):
     finetune_dir = save_dir / f"seed_{args.seed}.prosst_finetune"
     try:
         for iteration in range(1, args.n_iters + 1):
-            round_starting_sequence = starting_sequence
-            round_baseline_score = (
-                float(oracle.get_fitness(np.array([round_starting_sequence]))[0])
-                if args.reward_mode == "standardized_advantage"
-                else None
-            )
             generator.set_trace_context(
                 task=args.task,
                 seed=args.seed,
@@ -863,9 +861,7 @@ def run_seed(args):
                     batch_size=args.finetune_batch_size,
                     mask_budget=args.mask_budget,
                     reward_mode=args.reward_mode,
-                    baseline=round_baseline_score,
                     negative_weight=args.negative_weight,
-                    bottom_quantile=args.bottom_quantile,
                     advantage_clip=args.advantage_clip,
                 )
                 tracker.exp_results[iteration]["ProSST fine-tune"] = {
