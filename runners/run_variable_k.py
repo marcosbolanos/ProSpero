@@ -1033,7 +1033,8 @@ def main() -> None:
                         driver_debug_logger.event("etl_start", n_samples=n_samples)
                     etl_cmd = [
                         sys.executable,
-                        "src/prospero/runners/etl_results.py",
+                        "-m",
+                        "prospero.runners.etl_results",
                         "--task",
                         args.task,
                         "--results_dirpath",

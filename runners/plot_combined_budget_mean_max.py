@@ -125,7 +125,6 @@ def legend_handles():
             )
         )
         labels.append(f"{method.label} (K=128)")
-    for method in METHODS:
         handles.append(
             Line2D(
                 [0],
@@ -238,4 +237,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
