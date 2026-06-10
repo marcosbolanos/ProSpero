@@ -39,6 +39,7 @@ def prospero_commands(stage: ProSperoStage, context: ReproductionContext) -> lis
                 "--max-workers",
                 str(stage.max_workers),
                 "--safe",
+                "--resume-missing-seeds",
             ],
         ))
     return commands
