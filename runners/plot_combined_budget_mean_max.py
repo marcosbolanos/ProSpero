@@ -29,14 +29,8 @@ OG_ROOTS = {
 }
 
 EVODIFF_ROOTS = {
-    "AAV": (ROOT / "outputs/aav_zero_shot_evodiff_ft_rank_mixed_k4_variable_k_kl2_trace_batch64_20260603", "mixed_explore_exploit"),
-    "LGK": (ROOT / "outputs/lgk_zero_shot_evodiff_ft_k4_variable_k_kl2_20260530", "seed_grow"),
-    "GFP": (ROOT / "outputs/gfp_zero_shot_evodiff_ft_k4_variable_k_kl2_20260530", "seed_grow"),
-    "Pab1": (ROOT / "outputs/pab1_zero_shot_evodiff_ft_k4_variable_k_kl2_20260530", "seed_grow"),
-    "AMIE": (ROOT / "outputs/amie_zero_shot_evodiff_ft_k4_variable_k_kl2_20260531", "seed_grow"),
-    "E4B": (ROOT / "outputs/e4b_zero_shot_evodiff_ft_k4_variable_k_kl2_20260531", "seed_grow"),
-    "TEM": (ROOT / "outputs/tem_zero_shot_evodiff_ft_k4_variable_k_kl2_20260531", "seed_grow"),
-    "UBE2I": (ROOT / "outputs/ube2i_zero_shot_evodiff_ft_k4_variable_k_kl2_20260531", "seed_grow"),
+    task: (ROOT / "outputs/evodiff_grpo_all_landscapes_20260611", "mixed_explore_exploit")
+    for task in TASKS
 }
 
 PROSST_ROOTS = {
@@ -56,9 +50,8 @@ class Method:
 
 
 METHODS = [
-    Method("ProSST-GRPO", COLORS["prosst"], "s", "prosst", Path(".")),
+    Method("ProSST", COLORS["prosst"], "s", "prosst", Path(".")),
     Method("EvoDiff", COLORS["evodiff"], "^", "evodiff", Path(".")),
-    Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")),
 ]
 
 
@@ -202,7 +195,7 @@ def plot():
         handles,
         labels,
         loc="upper center",
-        ncol=3,
+        ncol=len(METHODS),
         bbox_to_anchor=(0.5, 1.01),
         frameon=False,
         columnspacing=1.8,

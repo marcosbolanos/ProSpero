@@ -2,10 +2,13 @@ import argparse
 import json
 import os
 import sys
+import time
 from argparse import ArgumentDefaultsHelpFormatter
 from copy import deepcopy
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from prospero.dataset import RegressionDataset
 from prospero.debug_trace import JsonlGzTraceWriter
@@ -43,7 +46,13 @@ def get_parser():
     parser.add_argument("--alphabet", type=str, default="CHARGE")
     parser.add_argument(
         "--mask_strategy",
-        choices=["calibrated_random", "random", "middle_entropy", "seed_grow"],
+        choices=[
+            "calibrated_random",
+            "random",
+            "middle_entropy",
+            "seed_grow",
+            "mixed_explore_exploit",
+        ],
         default="calibrated_random",
         help=(
             "Zero-shot mask selector. calibrated_random preserves the older "
@@ -115,6 +124,16 @@ def get_parser():
         default=None,
         help="Optional trace directory. Defaults to <seed output dir>/debug_traces.",
     )
+    parser.add_argument("--finetune_evodiff", action="store_true", default=False)
+    parser.add_argument("--finetune_epochs", type=int, default=5)
+    parser.add_argument("--finetune_lr", type=float, default=1e-5)
+    parser.add_argument("--lambda_kl", type=float, default=2.0)
+    parser.add_argument("--finetune_batch_size", type=int, default=1)
+    parser.add_argument("--finetune_replay", choices=["latest", "all"], default="latest")
+    parser.add_argument("--finetune_after_final", action="store_true", default=False)
+    parser.add_argument("--reward_mode", choices=["grpo_advantage"], default="grpo_advantage")
+    parser.add_argument("--negative_weight", type=float, default=0.25)
+    parser.add_argument("--advantage_clip", type=float, default=2.0)
 
     return parser
 
@@ -197,6 +216,204 @@ def _provided_mask_count_stats(args):
     }
 
 
+def grpo_advantage_weights(scores, clip=2.0):
+    scores = np.asarray(scores, dtype=float)
+    if scores.size == 0:
+        raise ValueError("Cannot compute GRPO rewards for an empty score list.")
+    center = float(np.mean(scores))
+    scale = float(np.std(scores))
+    if not np.isfinite(scale) or scale <= 1e-8:
+        scale = 1.0
+    weights = (scores - center) / scale
+    if clip is not None:
+        weights = np.clip(weights, -float(clip), float(clip))
+    return weights.astype(np.float32), {
+        "reward_mode": "grpo_advantage",
+        "baseline": center,
+        "baseline_mode": "group_mean",
+        "scale": scale,
+        "weight_min": float(np.min(weights)),
+        "weight_max": float(np.max(weights)),
+        "weight_mean": float(np.mean(weights)),
+        "weight_std": float(np.std(weights)),
+        "frac_negative": float(np.mean(weights < 0)),
+    }
+
+
+def global_grad_norm(parameters):
+    total = 0.0
+    for param in parameters:
+        if param.grad is None:
+            continue
+        grad = param.grad.detach()
+        total += float(torch.sum(grad * grad).item())
+    return total**0.5
+
+
+@torch.no_grad()
+def parameter_delta_norm(model, base_model):
+    delta_sq = 0.0
+    base_sq = 0.0
+    for param, base_param in zip(model.parameters(), base_model.parameters()):
+        diff = param.detach() - base_param.detach()
+        delta_sq += float(torch.sum(diff * diff).item())
+        base_sq += float(torch.sum(base_param.detach() * base_param.detach()).item())
+    delta = delta_sq**0.5
+    base = base_sq**0.5
+    return delta, delta / max(base, 1e-12)
+
+
+def make_evodiff_finetune_batch(tokenizer, sequences, weights, mask_budget, device):
+    input_rows = np.stack([tokenizer.tokenize([seq]) for seq in sequences])
+    input_ids = torch.tensor(input_rows, dtype=torch.long, device=device)
+    target_ids = input_ids.clone()
+    masked_input_ids = input_ids.clone()
+    row_ids = []
+    pos_ids = []
+    target_tokens = []
+    mask_weights = []
+    for row_idx, seq in enumerate(sequences):
+        budget = min(max(1, int(mask_budget)), len(seq))
+        positions = np.random.choice(np.arange(len(seq)), budget, replace=False)
+        for pos in positions:
+            masked_input_ids[row_idx, int(pos)] = tokenizer.mask_id
+            row_ids.append(row_idx)
+            pos_ids.append(int(pos))
+            target_tokens.append(int(target_ids[row_idx, int(pos)].item()))
+            mask_weights.append(float(weights[row_idx]))
+    return {
+        "input_ids": masked_input_ids,
+        "row_ids": torch.tensor(row_ids, dtype=torch.long, device=device),
+        "pos_ids": torch.tensor(pos_ids, dtype=torch.long, device=device),
+        "target_ids": torch.tensor(target_tokens, dtype=torch.long, device=device),
+        "weights": torch.tensor(mask_weights, dtype=torch.float32, device=device),
+    }
+
+
+def finetune_evodiff_on_sequences(
+    model,
+    base_model,
+    tokenizer,
+    sequences,
+    scores,
+    output_dir,
+    round_idx,
+    args,
+):
+    if len(sequences) != len(scores):
+        raise ValueError("sequences and scores must have the same length.")
+    if not sequences:
+        return []
+    if args.reward_mode != "grpo_advantage":
+        raise ValueError(f"Unsupported reward_mode={args.reward_mode!r}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    metrics_path = os.path.join(output_dir, "evodiff_finetune_metrics.jsonl")
+    weights, reward_metadata = grpo_advantage_weights(scores, clip=args.advantage_clip)
+    order = np.arange(len(sequences))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.finetune_lr)
+    metrics = []
+    train_start = time.perf_counter()
+    device = next(model.parameters()).device
+
+    for epoch in range(1, args.finetune_epochs + 1):
+        model.train()
+        np.random.shuffle(order)
+        epoch_start = time.perf_counter()
+        step_metrics = []
+        for start in range(0, len(order), args.finetune_batch_size):
+            ids = order[start : start + args.finetune_batch_size]
+            batch = make_evodiff_finetune_batch(
+                tokenizer,
+                [sequences[i] for i in ids],
+                weights[ids],
+                args.mask_budget,
+                device,
+            )
+            timestep = torch.zeros(batch["input_ids"].shape[0], dtype=torch.long, device=device)
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(batch["input_ids"], timestep)
+            with torch.no_grad():
+                base_logits = base_model(batch["input_ids"], timestep)
+
+            masked_logits = logits[batch["row_ids"], batch["pos_ids"]]
+            masked_base_logits = base_logits[batch["row_ids"], batch["pos_ids"]]
+            nll = F.cross_entropy(masked_logits, batch["target_ids"], reduction="none")
+
+            log_probs = F.log_softmax(masked_logits[:, :20], dim=-1)
+            base_log_probs = F.log_softmax(masked_base_logits[:, :20], dim=-1)
+            probs = log_probs.exp()
+            kl = (probs * (log_probs - base_log_probs)).sum(dim=-1)
+
+            pos_weight = batch["weights"].clamp_min(0.0)
+            neg_weight = (-batch["weights"]).clamp_min(0.0)
+            signed_weight = pos_weight - float(args.negative_weight) * neg_weight
+            nll_loss = (nll * signed_weight).mean()
+            kl_loss = kl.mean()
+            loss = nll_loss + float(args.lambda_kl) * kl_loss
+            loss.backward()
+            grad_norm = global_grad_norm(model.parameters())
+            optimizer.step()
+            step_metrics.append(
+                {
+                    "loss": float(loss.detach().cpu()),
+                    "weighted_nll": float(nll_loss.detach().cpu()),
+                    "kl": float(kl_loss.detach().cpu()),
+                    "grad_norm": float(grad_norm),
+                    "mean_weight": float(batch["weights"].mean().detach().cpu()),
+                    "effective_positive_weight": float(pos_weight.mean().detach().cpu()),
+                    "effective_negative_weight": float(neg_weight.mean().detach().cpu()),
+                }
+            )
+
+        update_norm, relative_update_norm = parameter_delta_norm(model, base_model)
+        metric = {
+            "event": "evodiff_finetune_epoch",
+            "round": int(round_idx),
+            "epoch": int(epoch),
+            "epochs": int(args.finetune_epochs),
+            "n_sequences": int(len(sequences)),
+            "batch_size": int(args.finetune_batch_size),
+            "mask_budget": int(args.mask_budget),
+            "lr": float(args.finetune_lr),
+            "lambda_kl": float(args.lambda_kl),
+            "reward_mode": args.reward_mode,
+            "negative_weight": float(args.negative_weight),
+            "reward_metadata": reward_metadata,
+            "seconds": float(time.perf_counter() - epoch_start),
+            "loss": float(np.mean([m["loss"] for m in step_metrics])),
+            "weighted_nll": float(np.mean([m["weighted_nll"] for m in step_metrics])),
+            "kl": float(np.mean([m["kl"] for m in step_metrics])),
+            "grad_norm": float(np.mean([m["grad_norm"] for m in step_metrics])),
+            "max_grad_norm": float(np.max([m["grad_norm"] for m in step_metrics])),
+            "mean_weight": float(np.mean([m["mean_weight"] for m in step_metrics])),
+            "effective_positive_weight": float(np.mean([m["effective_positive_weight"] for m in step_metrics])),
+            "effective_negative_weight": float(np.mean([m["effective_negative_weight"] for m in step_metrics])),
+            "update_norm": float(update_norm),
+            "relative_update_norm": float(relative_update_norm),
+        }
+        metrics.append(metric)
+        with open(metrics_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(metric, sort_keys=True) + "\n")
+
+    with open(metrics_path, "a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "event": "evodiff_finetune_round_complete",
+                    "round": int(round_idx),
+                    "epochs": int(args.finetune_epochs),
+                    "n_sequences": int(len(sequences)),
+                    "total_seconds": float(time.perf_counter() - train_start),
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+    model.eval()
+    return metrics
+
+
 def run_iter(args, logger):
     set_seed(args.seed, args.full_deterministic)
     logger.info("Starting zero-shot seed %s", args.seed)
@@ -216,6 +433,13 @@ def run_iter(args, logger):
     model, _, tokenizer_oadm, _ = OA_DM_38M()
     model = model.cuda()
     model.eval()
+    base_model = None
+    if args.finetune_evodiff:
+        base_model, _, _, _ = OA_DM_38M()
+        base_model = base_model.cuda()
+        base_model.eval()
+        for param in base_model.parameters():
+            param.requires_grad_(False)
 
     sampler = ProteinSampler(model, tokenizer_oadm, alphabet)
     trace_writer = None
@@ -242,7 +466,7 @@ def run_iter(args, logger):
         mask_count_stats = None
 
     entropy_metadata = None
-    if args.mask_strategy in {"middle_entropy", "seed_grow"}:
+    if args.mask_strategy in {"middle_entropy", "seed_grow", "mixed_explore_exploit"}:
         tokenized_seq = tokenizer_oadm.tokenize([starting_sequence])
         maskable_tokens = np.array(list(sampler.token_to_cluster))
         maskable_ids = np.nonzero(np.isin(tokenized_seq, maskable_tokens))[0]
@@ -279,6 +503,20 @@ def run_iter(args, logger):
         }
         if args.mask_strategy == "seed_grow"
         else None,
+        "evodiff_finetuning": {
+            "enabled": bool(args.finetune_evodiff),
+            "objective": "grpo_advantage_weighted_masked_token_nll_plus_kl_current_to_frozen_base",
+            "training_corruption": "uniform random fixed-budget masks",
+            "mask_budget": args.mask_budget,
+            "epochs_per_round": args.finetune_epochs,
+            "lr": args.finetune_lr,
+            "lambda_kl": args.lambda_kl,
+            "batch_size": args.finetune_batch_size,
+            "replay": args.finetune_replay,
+            "reward_mode": args.reward_mode,
+            "negative_weight": args.negative_weight,
+            "advantage_clip": args.advantage_clip,
+        },
     }
     with open(metadata_path, "w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2, sort_keys=True)
@@ -290,6 +528,9 @@ def run_iter(args, logger):
         best_percentile=0.95,
     )
 
+    replay_sequences = []
+    replay_scores = []
+    finetune_dir = os.path.join(save_dir, f"seed_{args.seed}.evodiff_finetune")
     try:
         for e in range(args.n_iters):
             iteration = e + 1
@@ -360,7 +601,11 @@ def run_iter(args, logger):
                     sequence=sequence,
                     oracle_score=float(score),
                 )
+            if args.mask_strategy == "mixed_explore_exploit":
+                sampler.update_mask_position_rewards(starting_sequence, sequences, scores)
             dataset.add((sequences, scores))
+            replay_sequences.extend(sequences)
+            replay_scores.extend(scores)
             exp_tracker.calculate_top_n_metrics((sequences, scores), iteration, n=100)
             exp_tracker.exp_results[iteration]["Zero-shot"] = metadata
             exp_tracker.save_results(save_path)
@@ -370,6 +615,29 @@ def run_iter(args, logger):
                 if not args.task.startswith("D_SHIFT")
                 else get_new_starting_seq_dshift(dataset, args.task)
             )
+            if args.finetune_evodiff and (iteration < args.n_iters or args.finetune_after_final):
+                if args.mask_budget is None:
+                    raise ValueError("--mask_budget is required for EvoDiff fine-tuning.")
+                train_sequences = sequences if args.finetune_replay == "latest" else replay_sequences
+                train_scores = scores if args.finetune_replay == "latest" else replay_scores
+                ft_start = time.perf_counter()
+                ft_metrics = finetune_evodiff_on_sequences(
+                    model,
+                    base_model,
+                    tokenizer_oadm,
+                    train_sequences,
+                    train_scores,
+                    finetune_dir,
+                    round_idx=iteration,
+                    args=args,
+                )
+                exp_tracker.exp_results[iteration]["EvoDiff fine-tune"] = {
+                    "seconds": float(time.perf_counter() - ft_start),
+                    "n_sequences": len(train_sequences),
+                    "epochs": args.finetune_epochs,
+                    "last_epoch": ft_metrics[-1] if ft_metrics else None,
+                }
+                exp_tracker.save_results(save_path)
     finally:
         if trace_writer is not None:
             trace_writer.close()
