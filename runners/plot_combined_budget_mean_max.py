@@ -53,6 +53,7 @@ class Method:
 METHODS = [
     Method("ProSST", COLORS["prosst"], "s", "prosst", Path(".")),
     Method("EvoDiff", COLORS["evodiff"], "^", "evodiff", Path(".")),
+    Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")),
 ]
 
 
