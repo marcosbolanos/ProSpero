@@ -8,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 from prospero.plotting_style import COLORS, set_prospero_style
 
@@ -103,6 +104,90 @@ def aggregate(method: Method, task: str, budget: int):
     return xs, np.array(means), np.array(sems), counts
 
 
+def should_add_inset(series: list[tuple[Method, int, np.ndarray, np.ndarray, np.ndarray]]) -> bool:
+    all_values = []
+    late_values = []
+    for _, _, x, y, e in series:
+        valid = np.isfinite(y)
+        if not valid.any():
+            continue
+        all_values.extend((y[valid] - e[valid]).tolist())
+        all_values.extend((y[valid] + e[valid]).tolist())
+        late = valid & (x >= 6)
+        late_values.extend((y[late] - e[late]).tolist())
+        late_values.extend((y[late] + e[late]).tolist())
+    if not all_values or not late_values:
+        return False
+    full_range = float(np.nanmax(all_values) - np.nanmin(all_values))
+    late_range = float(np.nanmax(late_values) - np.nanmin(late_values))
+    if full_range <= 0:
+        return False
+    return late_range / full_range <= 0.36
+
+
+def add_zoom_inset(
+    ax,
+    series: list[tuple[Method, int, np.ndarray, np.ndarray, np.ndarray]],
+):
+    if not should_add_inset(series):
+        return None
+
+    x_min, x_max = 6, 10
+    zoom_values = []
+    for _, _, x, y, e in series:
+        keep = np.isfinite(y) & (x >= x_min) & (x <= x_max)
+        if keep.any():
+            zoom_values.extend((y[keep] - e[keep]).tolist())
+            zoom_values.extend((y[keep] + e[keep]).tolist())
+    if not zoom_values:
+        return None
+    y_min = float(np.nanmin(zoom_values))
+    y_max = float(np.nanmax(zoom_values))
+    pad = max((y_max - y_min) * 0.18, abs(y_max) * 0.002, 1e-6)
+
+    axins = inset_axes(
+        ax,
+        width="54%",
+        height="48%",
+        loc="lower right",
+        borderpad=1.35,
+    )
+    for method, budget, x, y, e in series:
+        keep = np.isfinite(y) & (x >= x_min) & (x <= x_max)
+        if not keep.any():
+            continue
+        color = method.color if budget == 128 else pastel(method.color)
+        linewidth = 2.25 if budget == 128 else 1.85
+        axins.plot(
+            x[keep],
+            y[keep],
+            color=color,
+            marker=method.marker,
+            linewidth=linewidth,
+            markersize=3.9,
+            alpha=0.98,
+        )
+        axins.fill_between(
+            x[keep],
+            y[keep] - e[keep],
+            y[keep] + e[keep],
+            color=color,
+            alpha=0.12,
+            linewidth=0,
+        )
+    axins.set_xlim(x_min, x_max)
+    axins.set_ylim(y_min - pad, y_max + pad)
+    axins.set_xticks([6, 8, 10])
+    axins.tick_params(axis="both", labelsize=13, pad=1)
+    axins.grid(True, axis="y", linewidth=0.45, alpha=0.35)
+    for spine in axins.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.9)
+        spine.set_color(COLORS["muted"])
+    mark_inset(ax, axins, loc1=2, loc2=4, fc="none", ec=COLORS["muted"], lw=0.85, alpha=0.85)
+    return {"xlim": (x_min, x_max), "ylim": (y_min - pad, y_max + pad)}
+
+
 def legend_handles():
     handles = []
     labels = []
@@ -145,8 +230,10 @@ def plot():
     )
     fig, axes = plt.subplots(2, 4, figsize=(30.0, 16.0), sharex=True)
     summary = []
+    zoom_summary = []
     for idx, task in enumerate(TASKS):
         ax = axes[idx // 4, idx % 4]
+        series = []
         for method in METHODS:
             for budget in BUDGETS:
                 x, y, e, counts = aggregate(method, task, budget)
@@ -181,10 +268,17 @@ def plot():
                     f"{task} {method.label} K={budget}: counts={counts} "
                     f"round10={y[-1]:.6g} sem={e[-1]:.3g}"
                 )
+                series.append((method, budget, x, y, e))
         ax.set_title(task, loc="left", pad=6)
         ax.set_xlim(1, 10)
         ax.set_xticks(range(1, 11))
         ax.grid(True, axis="y")
+        zoom_meta = add_zoom_inset(ax, series)
+        if zoom_meta is not None:
+            zoom_summary.append(
+                f"{task} zoom xlim={zoom_meta['xlim']} "
+                f"ylim=({zoom_meta['ylim'][0]:.6g}, {zoom_meta['ylim'][1]:.6g})"
+            )
         if idx % 4 == 0:
             ax.set_ylabel("Mean max fitness")
         if idx // 4 == 1:
@@ -215,7 +309,11 @@ def plot():
         fig.savefig(path, dpi=320 if path.suffix == ".png" else None, bbox_inches="tight")
     plt.close(fig)
     (OUT / "plot_summary.txt").write_text(
-        "Written plots:\n" + "\n".join(map(str, paths)) + "\n\nSummary:\n" + "\n".join(summary) + "\n",
+        "Written plots:\n"
+        + "\n".join(map(str, paths))
+        + "\n\nSummary:\n"
+        + "\n".join(summary + zoom_summary)
+        + "\n",
         encoding="utf-8",
     )
     return paths
