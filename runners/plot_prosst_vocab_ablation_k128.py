@@ -63,6 +63,7 @@ def parse_args():
     parser.add_argument("--restricted-root", default=None, help="Root containing TASK/seed_*.pkl for restricted runs.")
     parser.add_argument("--unrestricted-root", default=None, help="Root containing TASK/seed_*.pkl for unrestricted runs.")
     parser.add_argument("--tasks", nargs="+", default=TASKS)
+    parser.add_argument("--budget", type=int, default=128)
     return parser.parse_args()
 
 
@@ -139,12 +140,12 @@ def main():
         ax.axis("off")
 
     fig.legend(loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.02), frameon=False)
-    fig.suptitle("K=128 ProSST vocabulary restriction ablation", fontsize=20, fontweight=600, y=1.05)
+    fig.suptitle(f"K={args.budget} ProSST vocabulary restriction ablation", fontsize=20, fontweight=600, y=1.05)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     OUT.mkdir(parents=True, exist_ok=True)
-    png = OUT / "prosst_restricted_vs_unrestricted_vocab_k128_mean_max.png"
-    pdf = OUT / "prosst_restricted_vs_unrestricted_vocab_k128_mean_max.pdf"
+    png = OUT / f"prosst_restricted_vs_unrestricted_vocab_k{args.budget}_mean_max.png"
+    pdf = OUT / f"prosst_restricted_vs_unrestricted_vocab_k{args.budget}_mean_max.pdf"
     fig.savefig(png, dpi=320, bbox_inches="tight")
     fig.savefig(pdf, bbox_inches="tight")
     plt.close(fig)

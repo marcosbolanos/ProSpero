@@ -99,8 +99,6 @@ def zero_shot_commands(stage: ZeroShotStage, context: ReproductionContext) -> li
                         str(stage.finetune_batch_size),
                         "--finetune_replay",
                         "all",
-                        "--reward_mode",
-                        stage.loss,
                     ])
                 commands.append((f"{stage.name}_n{budget}_{task}_seed{seed}", cmd))
     return commands
@@ -145,8 +143,8 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
     budgets = sorted({budget for stage in stages for budget in getattr(stage, "budgets", ())})
 
     main_zero_shot_stage = None
-    if "grpo_cluster" in stage_names:
-        main_zero_shot_stage = "grpo_cluster"
+    if "advantage_weighted" in stage_names:
+        main_zero_shot_stage = "advantage_weighted"
 
     if main_zero_shot_stage is not None and "prospero_cnn_variable_k" in stage_names:
         commands.append((
@@ -182,11 +180,13 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
                         "--run_dir",
                         str(run_dir),
                         "--method_label",
-                        f"0shotProt ProSST {stage.name} K={budget}",
+                        f"{stage.plot_label}, K={budget}",
                         "--output_dir",
                         str(context.plots / "round_histograms" / stage.name / f"k{budget}"),
                         "--tasks",
                         *stage.tasks,
+                        "--seeds",
+                        str(stage.seeds[0]),
                     ],
                 ))
 
@@ -205,22 +205,25 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
             ],
         ))
 
-    if {"grpo_cluster", "grpo_unrestricted_vocab"}.issubset(stage_names) and 128 in budgets:
-        commands.append((
-            "plot_vocab_ablation_k128",
-            [
-                sys.executable,
-                "-m",
-                "prospero.runners.plot_prosst_vocab_ablation_k128",
-                "--output-dir",
-                str(context.plots / "vocab_ablation_k128"),
-                "--restricted-root",
-                str(context.results / "0shotprot_prosst_grpo_cluster_n128"),
-                "--unrestricted-root",
-                str(context.results / "0shotprot_prosst_grpo_unrestricted_vocab_n128"),
-                "--tasks",
-                *(tasks or ("AAV", "LGK")),
-            ],
-        ))
+    if {"advantage_weighted", "advantage_weighted_unrestricted_vocab"}.issubset(stage_names):
+        for budget in budgets:
+            commands.append((
+                f"plot_vocab_ablation_k{budget}",
+                [
+                    sys.executable,
+                    "-m",
+                    "prospero.runners.plot_prosst_vocab_ablation_k128",
+                    "--output-dir",
+                    str(context.plots / f"vocab_ablation_k{budget}"),
+                    "--restricted-root",
+                    str(context.results / f"0shotprot_prosst_advantage_weighted_n{budget}"),
+                    "--unrestricted-root",
+                    str(context.results / f"0shotprot_prosst_advantage_weighted_unrestricted_vocab_n{budget}"),
+                    "--budget",
+                    str(budget),
+                    "--tasks",
+                    *(tasks or ("AAV", "LGK")),
+                ],
+            ))
 
     return commands

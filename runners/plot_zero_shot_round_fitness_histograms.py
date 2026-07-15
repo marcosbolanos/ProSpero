@@ -166,6 +166,7 @@ def load_explicit_run_rounds(seed_paths, task):
 
 
 def plot_explicit_run(task, method_label, round_scores, start_scores, output_dir, bins, output_name=None):
+    output_dir.mkdir(parents=True, exist_ok=True)
     set_prospero_style()
     all_scores = [score for scores in round_scores.values() for score in scores]
     all_starts = list(start_scores.values())
@@ -231,7 +232,8 @@ def plot_explicit_run(task, method_label, round_scores, start_scores, output_dir
     fig.subplots_adjust(left=0.12, right=0.985, top=0.925, bottom=0.06, hspace=0.20)
     output_dir.mkdir(parents=True, exist_ok=True)
     if output_name is None:
-        output_name = f"{task}_{method_label}_selected_fitness_histograms.png"
+        safe_label = re.sub(r"[^A-Za-z0-9]+", "_", method_label).strip("_")
+        output_name = f"{task}_{safe_label}_selected_fitness_histograms.png"
     out_path = output_dir / output_name
     fig.savefig(out_path, dpi=300)
     fig.savefig(out_path.with_suffix(".pdf"))

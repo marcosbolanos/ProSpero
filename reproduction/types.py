@@ -19,9 +19,9 @@ class ProSperoStage:
 class ZeroShotStage:
     name: str
     tasks: tuple[str, ...]
+    plot_label: str = "0shotProt (w/ ProSST)"
     budgets: tuple[int, ...] = (8, 128)
     seeds: tuple[int, ...] = (1, 2, 3, 4, 5)
-    loss: str = "grpo_advantage"
     finetune: bool = True
     smc_vocab: str = "cluster"
     mask_strategy: str = "mixed_explore_exploit"

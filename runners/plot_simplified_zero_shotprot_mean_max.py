@@ -62,7 +62,7 @@ class Method:
 
 
 INCLUDE_EVODIFF = True
-PROSST_LABEL = "0shotProt GRPO (w/ ProSST)"
+PROSST_LABEL = "0shotProt (w/ ProSST)"
 
 
 def methods_for(task: str, budget: int) -> list[Method]:

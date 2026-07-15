@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import math
 import os
 import pickle
 import sys
@@ -19,7 +20,6 @@ from prospero.dataset import RegressionDataset
 from prospero.experiment_tracker import ExperimentTracker
 from prospero.experiments_config import ALPHABETS, WT_SEQUENCES
 from prospero.landscapes import get_landscape
-from prospero.search.prosst_puct import decode_with_puct
 from prospero.utils import get_new_starting_seq, set_seed
 
 
@@ -80,9 +80,6 @@ def get_parser():
             "outside the original residue's alphabet cluster before sampling."
         ),
     )
-    p.add_argument("--decode_strategy", choices=["sample", "mcts"], default="sample")
-    p.add_argument("--mcts_simulations", type=int, default=64)
-    p.add_argument("--mcts_c_puct", type=float, default=1.5)
     p.add_argument("--model_path", default="AI4Protein/ProSST-2048")
     p.add_argument("--structure_tokens_dir", default=str(STRUCTURE_TOKENS_DIR))
     p.add_argument("--structure_vocab_size", default="2048")
@@ -95,11 +92,6 @@ def get_parser():
     p.add_argument("--finetune_batch_size", type=int, default=16)
     p.add_argument("--finetune_replay", choices=["all", "latest"], default="all")
     p.add_argument("--finetune_after_final", action="store_true", default=False)
-    p.add_argument(
-        "--reward_mode",
-        choices=["grpo_advantage"],
-        default="grpo_advantage",
-    )
     p.add_argument("--advantage_clip", type=float, default=2.0)
     p.add_argument("--negative_weight", type=float, default=0.25)
     p.add_argument("--full_deterministic", action="store_true", default=False)
@@ -140,7 +132,7 @@ def tokenize_structure_tokens(tokens, device):
     return torch.tensor([[1, *shifted, 2]], dtype=torch.long, device=device)
 
 
-def grpo_advantage_weights(scores, clip=2.0):
+def standardized_advantage_weights(scores, clip=2.0):
     scores = np.asarray(scores, dtype=float)
     if scores.size == 0:
         raise ValueError("Cannot compute rewards for an empty score list.")
@@ -152,7 +144,7 @@ def grpo_advantage_weights(scores, clip=2.0):
     if clip is not None:
         weights = np.clip(weights, -float(clip), float(clip))
     return weights.astype(np.float32), {
-        "reward_mode": "grpo_advantage",
+        "reward_mode": "advantage_weighted",
         "baseline": center,
         "baseline_mode": "group_mean",
         "scale": scale,
@@ -425,8 +417,6 @@ class ProSSTGenerator:
         masks, entropy_metadata = self.sample_masks(starting_sequence, batch_size)
         covered_start = starting_sequence[: self.covered_length]
         fixed_tail = starting_sequence[self.covered_length :]
-        if self.args.decode_strategy == "mcts":
-            return self.generate_batch_mcts(covered_start, fixed_tail, masks)
         seqs = [list(covered_start) for _ in range(batch_size)]
         scores = np.zeros(batch_size, dtype=np.float64)
         lls = np.zeros(batch_size, dtype=np.float64)
@@ -488,57 +478,6 @@ class ProSSTGenerator:
                 inv_perplexity=float(np.exp(ll / max(1, self.args.mask_budget))),
             )
         return out, scores
-
-    @torch.inference_mode()
-    def generate_batch_mcts(self, covered_start, fixed_tail, masks):
-        out = []
-        scores = []
-        lls = []
-        for particle, mask in enumerate(masks):
-            final_state, summary = decode_with_puct(
-                self,
-                covered_start,
-                mask,
-                simulations=int(self.args.mcts_simulations),
-                c_puct=float(self.args.mcts_c_puct),
-            )
-            sequence = "".join(final_state.sequence) + fixed_tail
-            out.append(sequence)
-            scores.append(float(final_state.score))
-            lls.append(float(final_state.log_likelihood))
-            self.trace_event(
-                "mcts_summary",
-                particle=int(particle),
-                mask_positions=[int(pos) for pos in mask],
-                **summary,
-            )
-            for step_idx, (pos, action) in enumerate(zip(mask, final_state.steps), start=1):
-                self.trace_event(
-                    "smc_step",
-                    particle=int(particle),
-                    step=int(step_idx),
-                    position=int(pos),
-                    distribution="full_20aa" if self.args.smc_vocab == "full" else "constrained_cluster",
-                    decode_strategy="mcts",
-                    non_cluster_logit_penalty=float(self.args.non_cluster_logit_penalty),
-                    sampled=action.aa,
-                    original=covered_start[int(pos)],
-                    logp_sampled=float(action.logp_sampled),
-                    logp_original=float(action.logp_original),
-                    log_delta=float(action.log_delta),
-                    full_vocab_logp_sampled=float(action.full_vocab_logp),
-                )
-            self.trace_event(
-                "candidate",
-                stage="terminal_mcts",
-                smc_step=len(mask),
-                candidate=int(particle),
-                sequence=sequence,
-                zero_shot_score=float(final_state.score),
-                log_likelihood=float(final_state.log_likelihood),
-                inv_perplexity=float(np.exp(final_state.log_likelihood / max(1, len(mask)))),
-            )
-        return out, np.asarray(scores, dtype=np.float64)
 
     def get_top_sequences(self, candidates, candidate_scores, n_queries, ref_sequences):
         ref = set("".join(str(x) for x in seq) for seq in ref_sequences)
@@ -603,7 +542,6 @@ class ProSSTGenerator:
         lambda_kl,
         batch_size,
         mask_budget,
-        reward_mode="grpo_advantage",
         negative_weight=0.25,
         advantage_clip=2.0,
     ):
@@ -617,9 +555,7 @@ class ProSSTGenerator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         metrics_path = output_dir / "prosst_finetune_metrics.jsonl"
-        if reward_mode != "grpo_advantage":
-            raise ValueError(f"Unsupported reward_mode={reward_mode!r}; only grpo_advantage is supported.")
-        weights, reward_metadata = grpo_advantage_weights(
+        weights, reward_metadata = standardized_advantage_weights(
             scores,
             clip=advantage_clip,
         )
@@ -628,19 +564,22 @@ class ProSSTGenerator:
         metrics = []
         train_start = time.perf_counter()
         aa_cols = self.full_ids
-
         for epoch in range(1, epochs + 1):
             self.model.train()
             np.random.shuffle(order)
             epoch_start = time.perf_counter()
             step_metrics = []
+            batch_iter = []
             for start in range(0, len(order), batch_size):
                 ids = order[start : start + batch_size]
-                batch = self._make_finetune_batch(
-                    [sequences[i] for i in ids],
-                    weights[ids],
-                    mask_budget,
+                batch_iter.append(
+                    self._make_finetune_batch(
+                        [sequences[i] for i in ids],
+                        weights[ids],
+                        mask_budget,
+                    )
                 )
+            for batch in batch_iter:
                 optimizer.zero_grad(set_to_none=True)
                 logits = self.model(
                     input_ids=batch["input_ids"],
@@ -657,7 +596,6 @@ class ProSSTGenerator:
                 masked_logits = logits[batch["row_ids"], batch["pos_ids"]]
                 masked_base_logits = base_logits[batch["row_ids"], batch["pos_ids"]]
                 nll = F.cross_entropy(masked_logits, batch["target_ids"], reduction="none")
-
                 log_probs = F.log_softmax(masked_logits[:, aa_cols], dim=-1)
                 base_log_probs = F.log_softmax(masked_base_logits[:, aa_cols], dim=-1)
                 probs = log_probs.exp()
@@ -698,7 +636,7 @@ class ProSSTGenerator:
                 "mask_budget": int(mask_budget),
                 "lr": float(lr),
                 "lambda_kl": float(lambda_kl),
-                "reward_mode": reward_mode,
+                "objective": "advantage_weighted_masked_finetuning",
                 "negative_weight": float(negative_weight),
                 "reward_metadata": reward_metadata,
                 "seconds": float(time.perf_counter() - epoch_start),
@@ -764,10 +702,7 @@ def run_seed(args):
             "note": generator.mapping.note,
         },
         "generation": {
-            "mode": "no_rollout_sequential" if args.decode_strategy == "sample" else "puct_mcts_no_rollout",
-            "decode_strategy": args.decode_strategy,
-            "mcts_simulations": args.mcts_simulations,
-            "mcts_c_puct": args.mcts_c_puct,
+            "mode": "no_rollout_sequential",
             "mask_strategy": args.mask_strategy,
             "mask_budget": args.mask_budget,
             "smc_vocab": args.smc_vocab,
@@ -778,7 +713,11 @@ def run_seed(args):
         },
         "prosst_finetuning": {
             "enabled": bool(args.finetune_prosst),
-            "objective": "grpo_advantage_weighted_masked_token_nll_plus_kl_current_to_frozen_base",
+            "objective": (
+                "advantage_weighted_masked_finetuning_plus_kl_to_frozen_base"
+                if args.finetune_prosst
+                else None
+            ),
             "training_corruption": "uniform random fixed-budget masks",
             "mask_budget": args.mask_budget,
             "epochs_per_round": args.finetune_epochs,
@@ -786,7 +725,6 @@ def run_seed(args):
             "lambda_kl": args.lambda_kl,
             "batch_size": args.finetune_batch_size,
             "replay": args.finetune_replay,
-            "reward_mode": args.reward_mode,
             "negative_weight": args.negative_weight,
             "advantage_clip": args.advantage_clip,
         },
@@ -794,6 +732,7 @@ def run_seed(args):
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
     starting_sequence = WT_SEQUENCES[args.task]
+    start_sequences = [starting_sequence]
     replay_sequences = []
     replay_scores = []
     finetune_dir = save_dir / f"seed_{args.seed}.prosst_finetune"
@@ -808,12 +747,18 @@ def run_seed(args):
                 mask_strategy=args.mask_strategy,
                 mask_budget=args.mask_budget,
             )
-            candidates = []
-            candidate_scores = []
-            ref_sequences = list(dataset.train) + list(dataset.valid)
+            candidate_pool = {}
+            ref_sequences = {
+                "".join(str(token) for token in sequence)
+                for sequence in list(dataset.train) + list(dataset.valid)
+            }
+            base_batches = math.ceil(max(args.n_queries, args.batch_size) / args.batch_size)
+            planned_batches = base_batches
             generation_round = 0
-            while len(candidates) < args.n_queries:
+            while generation_round < planned_batches or len(candidate_pool) < args.n_queries:
                 generation_round += 1
+                start_idx = (generation_round - 1) % len(start_sequences)
+                generation_start = start_sequences[start_idx]
                 generator.set_trace_context(
                     task=args.task,
                     seed=args.seed,
@@ -823,25 +768,61 @@ def run_seed(args):
                     method="prosst_zero_shot",
                     mask_strategy=args.mask_strategy,
                     mask_budget=args.mask_budget,
+                    start_rank=start_idx + 1,
                 )
-                batch_seqs, batch_scores = generator.generate_batch(starting_sequence, args.batch_size)
-                selected = generator.get_top_sequences(batch_seqs, batch_scores, args.n_queries, ref_sequences + candidates)
-                selected_scores = {seq: score for seq, score in zip(batch_seqs, batch_scores)}
-                candidates.extend(selected)
-                candidate_scores.extend([selected_scores[seq] for seq in selected])
-            sequences = candidates[: args.n_queries]
+                batch_seqs, batch_scores = generator.generate_batch(generation_start, args.batch_size)
+                for sequence, candidate_score in zip(batch_seqs, batch_scores):
+                    if sequence in ref_sequences:
+                        continue
+                    previous = candidate_pool.get(sequence)
+                    record = (sequence, float(candidate_score), generation_start)
+                    if previous is None or record[1] > previous[1]:
+                        candidate_pool[sequence] = record
+
+            pool_records = list(candidate_pool.values())
+            selected_records = sorted(pool_records, key=lambda record: record[1], reverse=True)[: args.n_queries]
+            sequences = [record[0] for record in selected_records]
+            candidate_scores = [record[1] for record in selected_records]
+            sequence_starts = [record[2] for record in selected_records]
+            generator.trace_event(
+                "candidate_pool_summary",
+                planned_batches=int(planned_batches),
+                actual_batches=int(generation_round),
+                generated_candidates=int(generation_round * args.batch_size),
+                unique_eligible_candidates=int(len(pool_records)),
+            )
+            for rank, record in enumerate(selected_records, start=1):
+                generator.trace_event(
+                    "candidate_selected_for_query",
+                    selected_rank=rank,
+                    sequence=record[0],
+                    zero_shot_score=record[1],
+                )
             scores = oracle.get_fitness(np.array(sequences)).tolist()
             for query_idx, (sequence, score) in enumerate(zip(sequences, scores), start=1):
                 generator.trace_event("oracle_query", optimization_round=iteration, query_rank=query_idx, sequence=sequence, oracle_score=float(score))
             if args.mask_strategy == "mixed_explore_exploit":
-                generator.update_mask_position_rewards(starting_sequence, sequences, scores)
+                by_start = {}
+                for start_seq, sequence, score in zip(sequence_starts, sequences, scores):
+                    by_start.setdefault(start_seq, ([], []))
+                    by_start[start_seq][0].append(sequence)
+                    by_start[start_seq][1].append(score)
+                for start_seq, (start_sequences_for_update, start_scores_for_update) in by_start.items():
+                    generator.update_mask_position_rewards(start_seq, start_sequences_for_update, start_scores_for_update)
             dataset.add((sequences, scores))
             replay_sequences.extend(sequences)
             replay_scores.extend(scores)
             tracker.calculate_top_n_metrics((sequences, scores), iteration, n=100)
-            tracker.exp_results[iteration]["Zero-shot"] = metadata
+            tracker.exp_results[iteration]["Zero-shot"] = deepcopy(metadata)
+            tracker.exp_results[iteration]["Zero-shot"]["start_sequences"] = list(start_sequences)
+            tracker.exp_results[iteration]["Zero-shot"]["selection"] = {
+                "generated_candidates": int(generation_round * args.batch_size),
+                "unique_eligible_candidates": int(len(pool_records)),
+                "selected_mms_scores": candidate_scores,
+            }
             tracker.save_results(save_path)
             starting_sequence = get_new_starting_seq(dataset)
+            start_sequences = [starting_sequence]
             if args.finetune_prosst and (iteration < args.n_iters or args.finetune_after_final):
                 if args.finetune_replay == "latest":
                     train_sequences = sequences
@@ -860,7 +841,6 @@ def run_seed(args):
                     lambda_kl=args.lambda_kl,
                     batch_size=args.finetune_batch_size,
                     mask_budget=args.mask_budget,
-                    reward_mode=args.reward_mode,
                     negative_weight=args.negative_weight,
                     advantage_clip=args.advantage_clip,
                 )

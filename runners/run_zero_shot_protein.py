@@ -131,7 +131,6 @@ def get_parser():
     parser.add_argument("--finetune_batch_size", type=int, default=1)
     parser.add_argument("--finetune_replay", choices=["latest", "all"], default="latest")
     parser.add_argument("--finetune_after_final", action="store_true", default=False)
-    parser.add_argument("--reward_mode", choices=["grpo_advantage"], default="grpo_advantage")
     parser.add_argument("--negative_weight", type=float, default=0.25)
     parser.add_argument("--advantage_clip", type=float, default=2.0)
 
@@ -216,10 +215,10 @@ def _provided_mask_count_stats(args):
     }
 
 
-def grpo_advantage_weights(scores, clip=2.0):
+def standardized_advantage_weights(scores, clip=2.0):
     scores = np.asarray(scores, dtype=float)
     if scores.size == 0:
-        raise ValueError("Cannot compute GRPO rewards for an empty score list.")
+        raise ValueError("Cannot compute advantage weights for an empty score list.")
     center = float(np.mean(scores))
     scale = float(np.std(scores))
     if not np.isfinite(scale) or scale <= 1e-8:
@@ -228,7 +227,7 @@ def grpo_advantage_weights(scores, clip=2.0):
     if clip is not None:
         weights = np.clip(weights, -float(clip), float(clip))
     return weights.astype(np.float32), {
-        "reward_mode": "grpo_advantage",
+        "reward_mode": "advantage_weighted",
         "baseline": center,
         "baseline_mode": "group_mean",
         "scale": scale,
@@ -304,12 +303,9 @@ def finetune_evodiff_on_sequences(
         raise ValueError("sequences and scores must have the same length.")
     if not sequences:
         return []
-    if args.reward_mode != "grpo_advantage":
-        raise ValueError(f"Unsupported reward_mode={args.reward_mode!r}")
-
     os.makedirs(output_dir, exist_ok=True)
     metrics_path = os.path.join(output_dir, "evodiff_finetune_metrics.jsonl")
-    weights, reward_metadata = grpo_advantage_weights(scores, clip=args.advantage_clip)
+    weights, reward_metadata = standardized_advantage_weights(scores, clip=args.advantage_clip)
     order = np.arange(len(sequences))
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.finetune_lr)
     metrics = []
@@ -377,7 +373,7 @@ def finetune_evodiff_on_sequences(
             "mask_budget": int(args.mask_budget),
             "lr": float(args.finetune_lr),
             "lambda_kl": float(args.lambda_kl),
-            "reward_mode": args.reward_mode,
+            "objective": "advantage_weighted_masked_finetuning",
             "negative_weight": float(args.negative_weight),
             "reward_metadata": reward_metadata,
             "seconds": float(time.perf_counter() - epoch_start),
@@ -505,7 +501,7 @@ def run_iter(args, logger):
         else None,
         "evodiff_finetuning": {
             "enabled": bool(args.finetune_evodiff),
-            "objective": "grpo_advantage_weighted_masked_token_nll_plus_kl_current_to_frozen_base",
+            "objective": "advantage_weighted_masked_finetuning_plus_kl_to_frozen_base",
             "training_corruption": "uniform random fixed-budget masks",
             "mask_budget": args.mask_budget,
             "epochs_per_round": args.finetune_epochs,
@@ -513,7 +509,6 @@ def run_iter(args, logger):
             "lambda_kl": args.lambda_kl,
             "batch_size": args.finetune_batch_size,
             "replay": args.finetune_replay,
-            "reward_mode": args.reward_mode,
             "negative_weight": args.negative_weight,
             "advantage_clip": args.advantage_clip,
         },

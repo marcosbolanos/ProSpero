@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import math
 import pickle
 from dataclasses import dataclass
@@ -14,11 +15,11 @@ from prospero.plotting_style import COLORS, set_prospero_style
 
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "outputs" / "rl_vs_og" / "zero_shotprot_combined_budgets_grpo"
+OUT = ROOT / "outputs" / "rl_vs_og" / "zero_shotprot_combined_budgets"
 TASKS = ["AAV", "LGK", "GFP", "Pab1", "AMIE", "E4B", "TEM", "UBE2I"]
 BUDGETS = [128, 8]
 
-OG_ROOTS = {
+DEFAULT_OG_ROOTS = {
     "AAV": ROOT / "outputs/variable_k_cnn_excl_set_noa6000_20260504_175400/AAV_cnn",
     "LGK": ROOT / "outputs/out_240226_lgk_cnn",
     "GFP": ROOT / "outputs/out_240226_gfp_cnn",
@@ -34,7 +35,7 @@ EVODIFF_ROOTS = {
     for task in TASKS
 }
 
-PROSST_ROOTS = {
+DEFAULT_PROSST_ROOTS = {
     8: ROOT / "outputs/prosst_ft_all_landscapes_n8_grpo_cluster_20260604",
     128: ROOT / "outputs/prosst_ft_all_landscapes_n128_grpo_cluster_20260604",
 }
@@ -64,14 +65,20 @@ def pastel(hex_color: str, amount: float = 0.62) -> str:
     return "#" + "".join(f"{int(round(v)):02X}" for v in mixed)
 
 
-def seed_paths(method: Method, task: str, budget: int) -> list[Path]:
+def seed_paths(
+    method: Method,
+    task: str,
+    budget: int,
+    prosst_roots: dict[int, Path],
+    prospero_roots: dict[str, Path],
+) -> list[Path]:
     if method.root_kind == "prosst":
-        return sorted((PROSST_ROOTS[budget] / task).glob("seed_*.pkl"))
+        return sorted((prosst_roots[budget] / task).glob("seed_*.pkl"))
     if method.root_kind == "evodiff":
         root, strategy = EVODIFF_ROOTS[task]
         return sorted((root / f"n_samples_{budget}" / strategy / task).glob("seed_*.pkl"))
     if method.root_kind == "prospero":
-        return sorted((OG_ROOTS[task] / f"n_samples_{budget}" / task).glob("seed_*.pkl"))
+        return sorted((prospero_roots[task] / f"n_samples_{budget}" / task).glob("seed_*.pkl"))
     raise ValueError(method.root_kind)
 
 
@@ -89,8 +96,14 @@ def load_seed(path: Path) -> dict[int, float]:
     }
 
 
-def aggregate(method: Method, task: str, budget: int):
-    rows = [load_seed(path) for path in seed_paths(method, task, budget)]
+def aggregate(
+    method: Method,
+    task: str,
+    budget: int,
+    prosst_roots: dict[int, Path],
+    prospero_roots: dict[str, Path],
+):
+    rows = [load_seed(path) for path in seed_paths(method, task, budget, prosst_roots, prospero_roots)]
     xs = np.arange(1, 11)
     means, sems, counts = [], [], []
     for it in xs:
@@ -218,7 +231,18 @@ def legend_handles():
     return handles, labels
 
 
-def plot():
+def plot(
+    output_dir: Path = OUT,
+    prosst_k8_root: Path = DEFAULT_PROSST_ROOTS[8],
+    prosst_k128_root: Path = DEFAULT_PROSST_ROOTS[128],
+    prospero_results_dir: Path | None = None,
+):
+    prosst_roots = {8: Path(prosst_k8_root), 128: Path(prosst_k128_root)}
+    prospero_roots = (
+        {task: Path(prospero_results_dir) / f"{task}_cnn" for task in TASKS}
+        if prospero_results_dir is not None
+        else DEFAULT_OG_ROOTS
+    )
     set_prospero_style()
     plt.rcParams.update(
         {
@@ -237,7 +261,7 @@ def plot():
         series = []
         for method in METHODS:
             for budget in BUDGETS:
-                x, y, e, counts = aggregate(method, task, budget)
+                x, y, e, counts = aggregate(method, task, budget, prosst_roots, prospero_roots)
                 valid = np.isfinite(y)
                 if not valid.any():
                     summary.append(f"SKIP {task} {method.label} K={budget}: no data")
@@ -300,16 +324,17 @@ def plot():
     fig.suptitle("Mean-max fitness trajectories by query budget", fontsize=46, fontweight="semibold", y=1.065)
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.09, top=0.80, wspace=0.42, hspace=0.42)
 
-    OUT.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     paths = [
-        OUT / "zero_shotprot_grpo_combined_k8_k128_mean_max.png",
-        OUT / "zero_shotprot_grpo_combined_k8_k128_mean_max.pdf",
-        OUT / "zero_shotprot_grpo_combined_k8_k128_mean_max.svg",
+        output_dir / "zero_shotprot_combined_k8_k128_mean_max.png",
+        output_dir / "zero_shotprot_combined_k8_k128_mean_max.pdf",
+        output_dir / "zero_shotprot_combined_k8_k128_mean_max.svg",
     ]
     for path in paths:
         fig.savefig(path, dpi=320 if path.suffix == ".png" else None, bbox_inches="tight")
     plt.close(fig)
-    (OUT / "plot_summary.txt").write_text(
+    (output_dir / "plot_summary.txt").write_text(
         "Written plots:\n"
         + "\n".join(map(str, paths))
         + "\n\nSummary:\n"
@@ -320,8 +345,23 @@ def plot():
     return paths
 
 
+def get_parser():
+    parser = argparse.ArgumentParser(description="Plot K=8 and K=128 mean-max trajectories.")
+    parser.add_argument("--output-dir", type=Path, default=OUT)
+    parser.add_argument("--prosst-k8-root", type=Path, default=DEFAULT_PROSST_ROOTS[8])
+    parser.add_argument("--prosst-k128-root", type=Path, default=DEFAULT_PROSST_ROOTS[128])
+    parser.add_argument("--prospero-results-dir", type=Path, default=None)
+    return parser
+
+
 def main():
-    paths = plot()
+    args = get_parser().parse_args()
+    paths = plot(
+        output_dir=args.output_dir,
+        prosst_k8_root=args.prosst_k8_root,
+        prosst_k128_root=args.prosst_k128_root,
+        prospero_results_dir=args.prospero_results_dir,
+    )
     print(f"Wrote {len(paths)} plot files")
     for path in paths:
         print(path)
