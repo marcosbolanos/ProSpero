@@ -321,7 +321,6 @@ def plot(
         handlelength=2.2,
         handletextpad=0.55,
     )
-    fig.suptitle("Mean-max fitness trajectories by query budget", fontsize=46, fontweight="semibold", y=1.065)
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.09, top=0.80, wspace=0.42, hspace=0.42)
 
     output_dir = Path(output_dir)

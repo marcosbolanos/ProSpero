@@ -251,7 +251,6 @@ def plot_budget(budget: int):
         handles.extend(h)
         labels.extend(l)
     fig.legend(handles, labels, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.0), frameon=False)
-    fig.suptitle(f"K={budget} mean-max fitness trajectories", fontsize=46, fontweight="semibold", y=1.045)
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.09, top=0.84, wspace=0.42, hspace=0.42)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / f"zero_shotprot_vs_prospero_k{budget}_mean_max.png"

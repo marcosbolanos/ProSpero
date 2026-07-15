@@ -89,7 +89,6 @@ def plot_scatter(results):
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.suptitle("Oracle additivity of sampled double mutants", fontsize=44, fontweight=600, y=0.988)
     fig.text(
         0.5,
         0.962,
@@ -159,7 +158,6 @@ def plot_histograms(results):
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.suptitle("Oracle epistasis distributions", fontsize=44, fontweight=600, y=0.988)
     fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.93, wspace=0.38, hspace=0.50)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_distributions_oracle_histograms.png"

@@ -211,25 +211,8 @@ def plot_explicit_run(task, method_label, round_scores, start_scores, output_dir
             color=COLORS["muted"],
         )
     axes[-1].set_xlabel("Oracle fitness")
-    fig.suptitle(
-        f"{task} selected-candidate fitness distributions",
-        x=0.12,
-        y=0.985,
-        ha="left",
-        fontsize=15,
-        fontweight="semibold",
-    )
-    fig.text(
-        0.12,
-        0.965,
-        f"{method_label}; blue bar = round starting-sequence fitness",
-        ha="left",
-        va="top",
-        fontsize=10,
-        color=COLORS["muted"],
-    )
     fig.text(0.017, 0.5, "Optimization round", rotation=90, va="center", ha="center", fontsize=12)
-    fig.subplots_adjust(left=0.12, right=0.985, top=0.925, bottom=0.06, hspace=0.20)
+    fig.subplots_adjust(left=0.12, right=0.985, top=0.985, bottom=0.06, hspace=0.20)
     output_dir.mkdir(parents=True, exist_ok=True)
     if output_name is None:
         safe_label = re.sub(r"[^A-Za-z0-9]+", "_", method_label).strip("_")
@@ -289,8 +272,7 @@ def plot_task_budget(task, budget, method_to_scores, output_dir, bins):
     for ax in axes[-1]:
         ax.set_xlabel("oracle fitness")
 
-    fig.suptitle(f"{task} zero-shot generated fitness distributions, seed_grow K=4 KL=2, query budget={budget}", y=0.995)
-    fig.tight_layout(rect=(0, 0, 1, 0.985))
+    fig.tight_layout()
     output_dir.mkdir(parents=True, exist_ok=True)
     method_suffix = "_".join(methods)
     out_path = output_dir / f"{task}_n{budget}_{method_suffix}_seed_grow_k4_kl2_histograms.png"

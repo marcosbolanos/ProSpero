@@ -190,8 +190,7 @@ class ProSSTPLL:
             model_path=model_path,
             finetune_prosst=False,
             alphabet="CHARGE",
-            smc_vocab="cluster",
-            non_cluster_logit_penalty=0.0,
+            decoding_vocab="restricted",
             structure_tokens_dir="outputs/prosst_structure_tokens",
             structure_vocab_size="2048",
             entropy_chunk_size=16,
@@ -201,7 +200,6 @@ class ProSSTPLL:
             seed_grow_alpha=1.0,
             seed_grow_beta=1.0,
             mask_budget=4,
-            mask_strategy="mixed_explore_exploit",
         )
         self.generator = ProSSTGenerator(args)
 
@@ -293,4 +291,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

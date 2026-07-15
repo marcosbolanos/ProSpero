@@ -140,7 +140,6 @@ def main():
         ax.axis("off")
 
     fig.legend(loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.02), frameon=False)
-    fig.suptitle(f"K={args.budget} ProSST vocabulary restriction ablation", fontsize=20, fontweight=600, y=1.05)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     OUT.mkdir(parents=True, exist_ok=True)

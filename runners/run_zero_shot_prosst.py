@@ -4,12 +4,13 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import logging
 import math
 import os
 import pickle
-import sys
 import time
 from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,7 @@ from prospero.dataset import RegressionDataset
 from prospero.experiment_tracker import ExperimentTracker
 from prospero.experiments_config import ALPHABETS, WT_SEQUENCES
 from prospero.landscapes import get_landscape
-from prospero.utils import get_new_starting_seq, set_seed
+from prospero.utils import set_seed
 
 
 AA20 = list("ACDEFGHIKLMNPQRSTVWY")
@@ -51,6 +52,7 @@ TASK_MAPPINGS = {
     ),
 }
 SUPPORTED_TASKS = sorted(TASK_MAPPINGS)
+LOGGER = logging.getLogger(__name__)
 
 
 def get_parser():
@@ -60,9 +62,8 @@ def get_parser():
     p.add_argument("--seed", type=int, choices=[1, 2, 3, 4, 5], default=1)
     p.add_argument("--n_queries", type=int, default=128)
     p.add_argument("--n_iters", type=int, default=10)
-    p.add_argument("--batch_size", type=int, default=256)
+    p.add_argument("--batch_size", type=int, default=64)
     p.add_argument("--mask_budget", type=int, default=4)
-    p.add_argument("--mask_strategy", choices=["random", "middle_entropy", "seed_grow", "mixed_explore_exploit"], default="mixed_explore_exploit")
     p.add_argument("--entropy_quantile", type=float, default=0.5)
     p.add_argument("--entropy_sigma", type=float, default=None)
     p.add_argument("--entropy_chunk_size", type=int, default=16)
@@ -70,16 +71,7 @@ def get_parser():
     p.add_argument("--seed_grow_beta", type=float, default=1.0)
     p.add_argument("--seed_grow_coupling_tau", type=float, default=4.0)
     p.add_argument("--alphabet", default="CHARGE", choices=list(ALPHABETS))
-    p.add_argument("--smc_vocab", choices=["cluster", "full"], default="cluster")
-    p.add_argument(
-        "--non_cluster_logit_penalty",
-        type=float,
-        default=0.0,
-        help=(
-            "When --smc_vocab full, subtract this from logits for amino acids "
-            "outside the original residue's alphabet cluster before sampling."
-        ),
-    )
+    p.add_argument("--decoding_vocab", choices=["restricted", "unrestricted"], default="restricted")
     p.add_argument("--model_path", default="AI4Protein/ProSST-2048")
     p.add_argument("--structure_tokens_dir", default=str(STRUCTURE_TOKENS_DIR))
     p.add_argument("--structure_vocab_size", default="2048")
@@ -90,12 +82,44 @@ def get_parser():
     p.add_argument("--finetune_lr", type=float, default=1e-5)
     p.add_argument("--lambda_kl", type=float, default=2.0)
     p.add_argument("--finetune_batch_size", type=int, default=16)
-    p.add_argument("--finetune_replay", choices=["all", "latest"], default="all")
-    p.add_argument("--finetune_after_final", action="store_true", default=False)
     p.add_argument("--advantage_clip", type=float, default=2.0)
     p.add_argument("--negative_weight", type=float, default=0.25)
     p.add_argument("--full_deterministic", action="store_true", default=False)
     return p
+
+
+@dataclass
+class CampaignState:
+    """Information available to optimization: WT baseline and online queries only."""
+
+    incumbent_sequence: str
+    incumbent_fitness: float
+    queried_sequences: set[str] = field(default_factory=set)
+    baseline_sequence: str = field(init=False)
+
+    def __post_init__(self):
+        self.baseline_sequence = self.incumbent_sequence
+
+    @property
+    def excluded_sequences(self):
+        return self.queried_sequences | {self.baseline_sequence}
+
+    def observe(self, sequences, scores):
+        self.queried_sequences.update(sequences)
+        best_idx = int(np.argmax(scores))
+        if float(scores[best_idx]) > self.incumbent_fitness:
+            self.incumbent_sequence = sequences[best_idx]
+            self.incumbent_fitness = float(scores[best_idx])
+
+
+def known_wt_fitness(reference_dataset, wt_sequence):
+    """Read the benchmark's known WT baseline without exposing other labels."""
+    sequences = np.concatenate((reference_dataset.train, reference_dataset.valid), axis=0)
+    scores = np.concatenate((reference_dataset.train_scores, reference_dataset.valid_scores), axis=0)
+    matches = np.asarray(["".join(map(str, sequence)) == wt_sequence for sequence in sequences])
+    if matches.sum() != 1:
+        raise ValueError(f"Expected exactly one WT baseline, found {int(matches.sum())}.")
+    return float(scores[matches][0])
 
 
 class JsonlGzWriter:
@@ -347,30 +371,18 @@ class ProSSTGenerator:
         covered_sequence = sequence[: self.covered_length]
         mask_budget = min(max(1, int(self.args.mask_budget)), len(covered_sequence))
         positions = np.arange(len(covered_sequence))
-        entropy_metadata = None
-        base_scores = np.ones(len(covered_sequence), dtype=float) / len(covered_sequence)
-        if self.args.mask_strategy in {"middle_entropy", "seed_grow", "mixed_explore_exploit"}:
-            entropies = self.compute_position_entropies(sequence)
-            base_scores, entropy_metadata = self.middle_entropy_scores(entropies)
+        entropies = self.compute_position_entropies(sequence)
+        base_scores, entropy_metadata = self.middle_entropy_scores(entropies)
         masks = []
         for particle in range(batch_size):
-            if self.args.mask_strategy == "random":
-                sampled = np.random.choice(positions, mask_budget, replace=False)
-            elif self.args.mask_strategy == "middle_entropy":
-                sampled = np.random.choice(positions, mask_budget, replace=False, p=base_scores)
-            elif self.args.mask_strategy == "seed_grow":
-                sampled = self.sample_seed_and_grow_mask(positions, base_scores, mask_budget)
-            elif self.args.mask_strategy == "mixed_explore_exploit":
-                sampled = self.sample_mixed_mask(positions, base_scores, mask_budget)
-            else:
-                raise ValueError(self.args.mask_strategy)
+            sampled = self.sample_mixed_mask(positions, base_scores, mask_budget)
             sampled = np.array(sorted(sampled), dtype=int)
             for pos in sampled:
                 self.mask_position_sample_count[int(pos)] = self.mask_position_sample_count.get(int(pos), 0) + 1
             self.trace_event(
                 "mask_selected",
                 particle=particle,
-                strategy=self.args.mask_strategy,
+                strategy="mixed_position_entropy_anticollapse",
                 starting_sequence=sequence,
                 mask_positions=sampled.tolist(),
                 mask_residues=[covered_sequence[pos] for pos in sampled],
@@ -381,24 +393,13 @@ class ProSSTGenerator:
         return masks, entropy_metadata
 
     def _distribution_ids(self, original_aa):
-        if self.args.smc_vocab == "full":
+        if self.args.decoding_vocab == "unrestricted":
             return self.full_ids
         return torch.tensor([self.aa_to_id[aa] for aa in self.alphabet[original_aa]], dtype=torch.long, device=self.device)
 
     def _sample_from_logits(self, logits, original_aa):
         dist_ids = self._distribution_ids(original_aa)
-        dist_logits = logits[dist_ids].clone()
-        if self.args.smc_vocab == "full" and self.args.non_cluster_logit_penalty > 0:
-            cluster = set(self.alphabet[original_aa])
-            penalty = torch.tensor(
-                [
-                    0.0 if self.id_to_aa[int(token.item())] in cluster else float(self.args.non_cluster_logit_penalty)
-                    for token in dist_ids
-                ],
-                dtype=dist_logits.dtype,
-                device=dist_logits.device,
-            )
-            dist_logits = dist_logits - penalty
+        dist_logits = logits[dist_ids]
         dist_log_probs = F.log_softmax(dist_logits, dim=0)
         sampled_idx = torch.multinomial(dist_log_probs.exp(), num_samples=1)
         sampled_id = dist_ids[sampled_idx].flatten()[0]
@@ -414,7 +415,7 @@ class ProSSTGenerator:
 
     @torch.inference_mode()
     def generate_batch(self, starting_sequence, batch_size):
-        masks, entropy_metadata = self.sample_masks(starting_sequence, batch_size)
+        masks, _ = self.sample_masks(starting_sequence, batch_size)
         covered_start = starting_sequence[: self.covered_length]
         fixed_tail = starting_sequence[self.covered_length :]
         seqs = [list(covered_start) for _ in range(batch_size)]
@@ -452,12 +453,11 @@ class ProSSTGenerator:
                 scores[particle] += float(log_delta.item())
                 lls[particle] += float(sampled_ll.item())
                 self.trace_event(
-                    "smc_step",
+                    "decode_step",
                     particle=int(particle),
                     step=int(step + 1),
                     position=int(pos),
-                    distribution="full_20aa" if self.args.smc_vocab == "full" else "constrained_cluster",
-                    non_cluster_logit_penalty=float(self.args.non_cluster_logit_penalty),
+                    distribution=self.args.decoding_vocab,
                     sampled=sampled_aa,
                     original=original_aa,
                     logp_sampled=float(logp_sampled.item()),
@@ -469,8 +469,8 @@ class ProSSTGenerator:
         for idx, (seq, score, ll) in enumerate(zip(out, scores, lls)):
             self.trace_event(
                 "candidate",
-                stage="terminal_no_rollout",
-                smc_step=max_steps,
+                stage="completed_sequence",
+                decode_steps=max_steps,
                 candidate=int(idx),
                 sequence=seq,
                 zero_shot_score=float(score),
@@ -478,19 +478,6 @@ class ProSSTGenerator:
                 inv_perplexity=float(np.exp(ll / max(1, self.args.mask_budget))),
             )
         return out, scores
-
-    def get_top_sequences(self, candidates, candidate_scores, n_queries, ref_sequences):
-        ref = set("".join(str(x) for x in seq) for seq in ref_sequences)
-        best = {}
-        for seq, score in zip(candidates, candidate_scores):
-            if seq in ref:
-                continue
-            if seq not in best or float(score) > best[seq]:
-                best[seq] = float(score)
-        selected = sorted(best, key=best.get, reverse=True)[:n_queries]
-        for rank, seq in enumerate(selected, start=1):
-            self.trace_event("candidate_selected_for_query", selected_rank=rank, sequence=seq, zero_shot_score=best[seq])
-        return selected
 
     def update_mask_position_rewards(self, starting_sequence, sequences, scores):
         baseline = float(np.mean(scores))
@@ -678,14 +665,20 @@ def run_seed(args):
     save_dir = Path(args.results_dirpath) / args.task
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / f"seed_{args.seed}.pkl"
+    completion_path = save_dir / f"seed_{args.seed}.complete.json"
     metadata_path = save_dir / f"seed_{args.seed}.prosst_zero_shot_metadata.json"
     trace_writer = None
     if args.debug_generation_trace:
         trace_writer = JsonlGzWriter(save_dir / "debug_traces" / f"seed_{args.seed}.events.jsonl.gz")
 
     oracle = get_landscape(args.task)
-    dataset = RegressionDataset(args.task)
-    tracker = ExperimentTracker(sys.modules[__name__], deepcopy(dataset), WT_SEQUENCES[args.task], best_percentile=0.95)
+    # Benchmark protocol: WT sequence and fitness are known starting baselines.
+    # No other initialization-set sequence or label may affect optimization.
+    reporting_reference_dataset = RegressionDataset(args.task)
+    wt_sequence = WT_SEQUENCES[args.task]
+    campaign = CampaignState(wt_sequence, known_wt_fitness(reporting_reference_dataset, wt_sequence))
+    # The initialization set is used only for post-hoc novelty reporting.
+    tracker = ExperimentTracker(LOGGER, deepcopy(reporting_reference_dataset), wt_sequence, best_percentile=0.95)
     generator = ProSSTGenerator(args)
     if trace_writer is not None:
         generator.set_trace_writer(trace_writer)
@@ -702,12 +695,11 @@ def run_seed(args):
             "note": generator.mapping.note,
         },
         "generation": {
-            "mode": "no_rollout_sequential",
-            "mask_strategy": args.mask_strategy,
+            "mode": "sequential_masked_decoding",
+            "mask_strategy": "mixed_position_entropy_anticollapse",
             "mask_budget": args.mask_budget,
-            "smc_vocab": args.smc_vocab,
-            "non_cluster_logit_penalty": args.non_cluster_logit_penalty,
-            "score": "sum logP(sampled residue)-logP(original residue) under ProSST logits",
+            "decoding_vocab": args.decoding_vocab,
+            "score": "sequential sum logP(decoded residue)-logP(incumbent residue)",
             "alphabet": args.alphabet,
             "batch_size": args.batch_size,
         },
@@ -724,15 +716,13 @@ def run_seed(args):
             "lr": args.finetune_lr,
             "lambda_kl": args.lambda_kl,
             "batch_size": args.finetune_batch_size,
-            "replay": args.finetune_replay,
+            "replay": "all_online_queries",
             "negative_weight": args.negative_weight,
             "advantage_clip": args.advantage_clip,
         },
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
-    starting_sequence = WT_SEQUENCES[args.task]
-    start_sequences = [starting_sequence]
     replay_sequences = []
     replay_scores = []
     finetune_dir = save_dir / f"seed_{args.seed}.prosst_finetune"
@@ -744,21 +734,17 @@ def run_seed(args):
                 n_queries=args.n_queries,
                 optimization_round=iteration,
                 method="prosst_zero_shot",
-                mask_strategy=args.mask_strategy,
+                mask_strategy="mixed_position_entropy_anticollapse",
                 mask_budget=args.mask_budget,
             )
             candidate_pool = {}
-            ref_sequences = {
-                "".join(str(token) for token in sequence)
-                for sequence in list(dataset.train) + list(dataset.valid)
-            }
+            ref_sequences = campaign.excluded_sequences
             base_batches = math.ceil(max(args.n_queries, args.batch_size) / args.batch_size)
             planned_batches = base_batches
             generation_round = 0
             while generation_round < planned_batches or len(candidate_pool) < args.n_queries:
                 generation_round += 1
-                start_idx = (generation_round - 1) % len(start_sequences)
-                generation_start = start_sequences[start_idx]
+                generation_start = campaign.incumbent_sequence
                 generator.set_trace_context(
                     task=args.task,
                     seed=args.seed,
@@ -766,9 +752,9 @@ def run_seed(args):
                     optimization_round=iteration,
                     generation_round=generation_round,
                     method="prosst_zero_shot",
-                    mask_strategy=args.mask_strategy,
+                    mask_strategy="mixed_position_entropy_anticollapse",
                     mask_budget=args.mask_budget,
-                    start_rank=start_idx + 1,
+                    start_rank=1,
                 )
                 batch_seqs, batch_scores = generator.generate_batch(generation_start, args.batch_size)
                 for sequence, candidate_score in zip(batch_seqs, batch_scores):
@@ -783,7 +769,6 @@ def run_seed(args):
             selected_records = sorted(pool_records, key=lambda record: record[1], reverse=True)[: args.n_queries]
             sequences = [record[0] for record in selected_records]
             candidate_scores = [record[1] for record in selected_records]
-            sequence_starts = [record[2] for record in selected_records]
             generator.trace_event(
                 "candidate_pool_summary",
                 planned_batches=int(planned_batches),
@@ -801,35 +786,22 @@ def run_seed(args):
             scores = oracle.get_fitness(np.array(sequences)).tolist()
             for query_idx, (sequence, score) in enumerate(zip(sequences, scores), start=1):
                 generator.trace_event("oracle_query", optimization_round=iteration, query_rank=query_idx, sequence=sequence, oracle_score=float(score))
-            if args.mask_strategy == "mixed_explore_exploit":
-                by_start = {}
-                for start_seq, sequence, score in zip(sequence_starts, sequences, scores):
-                    by_start.setdefault(start_seq, ([], []))
-                    by_start[start_seq][0].append(sequence)
-                    by_start[start_seq][1].append(score)
-                for start_seq, (start_sequences_for_update, start_scores_for_update) in by_start.items():
-                    generator.update_mask_position_rewards(start_seq, start_sequences_for_update, start_scores_for_update)
-            dataset.add((sequences, scores))
+            generator.update_mask_position_rewards(campaign.incumbent_sequence, sequences, scores)
             replay_sequences.extend(sequences)
             replay_scores.extend(scores)
             tracker.calculate_top_n_metrics((sequences, scores), iteration, n=100)
             tracker.exp_results[iteration]["Zero-shot"] = deepcopy(metadata)
-            tracker.exp_results[iteration]["Zero-shot"]["start_sequences"] = list(start_sequences)
+            tracker.exp_results[iteration]["Zero-shot"]["start_sequences"] = [campaign.incumbent_sequence]
             tracker.exp_results[iteration]["Zero-shot"]["selection"] = {
                 "generated_candidates": int(generation_round * args.batch_size),
                 "unique_eligible_candidates": int(len(pool_records)),
-                "selected_mms_scores": candidate_scores,
+                "selected_sequential_log_odds": candidate_scores,
             }
             tracker.save_results(save_path)
-            starting_sequence = get_new_starting_seq(dataset)
-            start_sequences = [starting_sequence]
-            if args.finetune_prosst and (iteration < args.n_iters or args.finetune_after_final):
-                if args.finetune_replay == "latest":
-                    train_sequences = sequences
-                    train_scores = scores
-                else:
-                    train_sequences = replay_sequences
-                    train_scores = replay_scores
+            campaign.observe(sequences, scores)
+            if args.finetune_prosst and iteration < args.n_iters:
+                train_sequences = replay_sequences
+                train_scores = replay_scores
                 ft_start = time.perf_counter()
                 ft_metrics = generator.finetune_on_sequences(
                     train_sequences,
@@ -856,14 +828,25 @@ def run_seed(args):
             trace_writer.close()
             summary_path = trace_writer.path.with_suffix("").with_suffix(".trace_summary.json")
             summary_path.write_text(json.dumps({"event_counts": trace_writer.counts}, indent=2, sort_keys=True), encoding="utf-8")
+    completion_path.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "task": args.task,
+                "seed": args.seed,
+                "rounds": args.n_iters,
+                "queries_per_round": args.n_queries,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     print(f"complete task={args.task} seed={args.seed} path={save_path}", flush=True)
 
 
-def info(msg):
-    print(msg, flush=True)
-
-
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = get_parser().parse_args()
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but unavailable")

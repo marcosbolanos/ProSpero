@@ -12,7 +12,10 @@ def csv_ints(values: Iterable[int]) -> str:
 
 
 def seed_done(run_root: Path, task: str, seed: int) -> bool:
-    return (run_root / task / f"seed_{seed}.pkl").is_file()
+    return (
+        (run_root / task / f"seed_{seed}.pkl").is_file()
+        and (run_root / task / f"seed_{seed}.complete.json").is_file()
+    )
 
 
 def prospero_commands(stage: ProSperoStage, context: ReproductionContext) -> list[tuple[str, list[str]]]:
@@ -64,16 +67,14 @@ def zero_shot_base(stage: ZeroShotStage, out: Path, task: str, seed: int, budget
         str(stage.batch_size),
         "--mask_budget",
         str(stage.mask_budget),
-        "--mask_strategy",
-        stage.mask_strategy,
         "--structure_tokens_dir",
         stage.structure_tokens_dir,
         "--device",
         "cuda",
         "--debug_generation_trace",
         "--full_deterministic",
-        "--smc_vocab",
-        stage.smc_vocab,
+        "--decoding_vocab",
+        stage.decoding_vocab,
     ]
 
 
@@ -97,8 +98,6 @@ def zero_shot_commands(stage: ZeroShotStage, context: ReproductionContext) -> li
                         str(stage.lambda_kl),
                         "--finetune_batch_size",
                         str(stage.finetune_batch_size),
-                        "--finetune_replay",
-                        "all",
                     ])
                 commands.append((f"{stage.name}_n{budget}_{task}_seed{seed}", cmd))
     return commands
@@ -143,8 +142,8 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
     budgets = sorted({budget for stage in stages for budget in getattr(stage, "budgets", ())})
 
     main_zero_shot_stage = None
-    if "advantage_weighted" in stage_names:
-        main_zero_shot_stage = "advantage_weighted"
+    if "prosst_finetuned" in stage_names:
+        main_zero_shot_stage = "prosst_finetuned"
 
     if main_zero_shot_stage is not None and "prospero_cnn_variable_k" in stage_names:
         commands.append((
@@ -205,7 +204,7 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
             ],
         ))
 
-    if {"advantage_weighted", "advantage_weighted_unrestricted_vocab"}.issubset(stage_names):
+    if {"prosst_finetuned", "prosst_finetuned_unrestricted"}.issubset(stage_names):
         for budget in budgets:
             commands.append((
                 f"plot_vocab_ablation_k{budget}",
@@ -216,9 +215,9 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
                     "--output-dir",
                     str(context.plots / f"vocab_ablation_k{budget}"),
                     "--restricted-root",
-                    str(context.results / f"0shotprot_prosst_advantage_weighted_n{budget}"),
+                    str(context.results / f"0shotprot_prosst_prosst_finetuned_n{budget}"),
                     "--unrestricted-root",
-                    str(context.results / f"0shotprot_prosst_advantage_weighted_unrestricted_vocab_n{budget}"),
+                    str(context.results / f"0shotprot_prosst_prosst_finetuned_unrestricted_n{budget}"),
                     "--budget",
                     str(budget),
                     "--tasks",

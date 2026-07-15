@@ -131,8 +131,8 @@ def print_plan(context: ReproductionContext, stages: list[Stage], options: Runti
         elif isinstance(stage, ZeroShotStage):
             ft = f"FT {stage.finetune_epochs} epochs, lr={stage.finetune_lr:g}, KL={stage.lambda_kl:g}" if stage.finetune else "no fine-tuning"
             print(
-                f"  {idx}. {stage.name}: {stage.plot_label}, vocab={stage.smc_vocab}, "
-                f"mask={stage.mask_strategy}/K{stage.mask_budget}, {ft}, budgets={stage.budgets}, seeds={stage.seeds}, tasks={stage.tasks}"
+                f"  {idx}. {stage.name}: {stage.plot_label}, vocab={stage.decoding_vocab}, "
+                f"mask=mixed/K{stage.mask_budget}, {ft}, budgets={stage.budgets}, seeds={stage.seeds}, tasks={stage.tasks}"
             )
         elif isinstance(stage, EpistasisStage):
             print(f"  {idx}. {stage.name}: samples_per_pair_type={stage.samples_per_pair_type}, tasks={stage.tasks}")

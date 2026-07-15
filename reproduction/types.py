@@ -23,8 +23,7 @@ class ZeroShotStage:
     budgets: tuple[int, ...] = (8, 128)
     seeds: tuple[int, ...] = (1, 2, 3, 4, 5)
     finetune: bool = True
-    smc_vocab: str = "cluster"
-    mask_strategy: str = "mixed_explore_exploit"
+    decoding_vocab: str = "restricted"
     mask_budget: int = 4
     n_iters: int = 10
     batch_size: int = 64
