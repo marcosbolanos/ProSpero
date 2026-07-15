@@ -221,12 +221,14 @@ class ProSSTGenerator:
         self.aa_to_id = {aa: self.vocab[aa] for aa in AA20}
         self.id_to_aa = {idx: aa for aa, idx in self.aa_to_id.items()}
         self.full_ids = torch.tensor([self.aa_to_id[aa] for aa in AA20], dtype=torch.long, device=self.device)
+        self.aa_index = {aa: idx for idx, aa in enumerate(AA20)}
         self.alphabet = ALPHABETS[args.alphabet]
         self.trace_writer = None
         self.trace_context = {}
         self.mask_position_reward_sum = {}
         self.mask_position_reward_count = {}
         self.mask_position_sample_count = {}
+        self._mms_cache = None
 
         mapping = TASK_MAPPINGS[self.task]
         self.mapping = mapping
@@ -414,12 +416,38 @@ class ProSSTGenerator:
         return aa, logp_sampled - logp_original, full_log_probs[AA20.index(aa)], logp_sampled, logp_original
 
     @torch.inference_mode()
+    def marginal_mutation_scores(self, starting_sequence, candidate_sequences):
+        """Score candidates from one fixed, unmasked incumbent context."""
+        covered_start = starting_sequence[: self.covered_length]
+        if self._mms_cache is None or self._mms_cache[0] != covered_start:
+            logits = self.logits_for_sequences([covered_start])[0]
+            log_probs = F.log_softmax(logits[:, self.full_ids], dim=-1)
+            self._mms_cache = (covered_start, log_probs.detach().cpu().numpy())
+
+        reference_log_probs = self._mms_cache[1]
+        original_ids = np.asarray([self.aa_index[aa] for aa in covered_start], dtype=np.int64)
+        positions = np.arange(len(covered_start))
+        scores = np.zeros(len(candidate_sequences), dtype=np.float64)
+        for idx, sequence in enumerate(candidate_sequences):
+            covered_candidate = sequence[: self.covered_length]
+            if len(covered_candidate) != len(covered_start):
+                raise ValueError("MMS requires candidate and incumbent sequences of equal covered length.")
+            candidate_ids = np.asarray([self.aa_index[aa] for aa in covered_candidate], dtype=np.int64)
+            mutated = candidate_ids != original_ids
+            scores[idx] = np.sum(
+                reference_log_probs[positions[mutated], candidate_ids[mutated]]
+                - reference_log_probs[positions[mutated], original_ids[mutated]],
+                dtype=np.float64,
+            )
+        return scores
+
+    @torch.inference_mode()
     def generate_batch(self, starting_sequence, batch_size):
         masks, _ = self.sample_masks(starting_sequence, batch_size)
         covered_start = starting_sequence[: self.covered_length]
         fixed_tail = starting_sequence[self.covered_length :]
         seqs = [list(covered_start) for _ in range(batch_size)]
-        scores = np.zeros(batch_size, dtype=np.float64)
+        sequential_scores = np.zeros(batch_size, dtype=np.float64)
         lls = np.zeros(batch_size, dtype=np.float64)
         max_steps = max(len(mask) for mask in masks)
         for step in range(max_steps):
@@ -450,7 +478,7 @@ class ProSSTGenerator:
                     original_aa,
                 )
                 seqs[particle][pos] = sampled_aa
-                scores[particle] += float(log_delta.item())
+                sequential_scores[particle] += float(log_delta.item())
                 lls[particle] += float(sampled_ll.item())
                 self.trace_event(
                     "decode_step",
@@ -466,18 +494,23 @@ class ProSSTGenerator:
                     full_vocab_logp_sampled=float(sampled_ll.item()),
                 )
         out = ["".join(seq) + fixed_tail for seq in seqs]
-        for idx, (seq, score, ll) in enumerate(zip(out, scores, lls)):
+        mms_scores = self.marginal_mutation_scores(starting_sequence, out)
+        for idx, (seq, mms_score, sequential_score, ll) in enumerate(
+            zip(out, mms_scores, sequential_scores, lls)
+        ):
             self.trace_event(
                 "candidate",
                 stage="completed_sequence",
                 decode_steps=max_steps,
                 candidate=int(idx),
                 sequence=seq,
-                zero_shot_score=float(score),
+                zero_shot_score=float(mms_score),
+                mms_score=float(mms_score),
+                sequential_decode_score=float(sequential_score),
                 log_likelihood=float(ll),
                 inv_perplexity=float(np.exp(ll / max(1, self.args.mask_budget))),
             )
-        return out, scores
+        return out, mms_scores
 
     def update_mask_position_rewards(self, starting_sequence, sequences, scores):
         baseline = float(np.mean(scores))
@@ -657,6 +690,7 @@ class ProSSTGenerator:
                 + "\n"
             )
         self.model.eval()
+        self._mms_cache = None
         return metrics
 
 
@@ -699,7 +733,7 @@ def run_seed(args):
             "mask_strategy": "mixed_position_entropy_anticollapse",
             "mask_budget": args.mask_budget,
             "decoding_vocab": args.decoding_vocab,
-            "score": "sequential sum logP(decoded residue)-logP(incumbent residue)",
+            "score": "incumbent-relative marginal mutation score from fixed unmasked incumbent logits",
             "alphabet": args.alphabet,
             "batch_size": args.batch_size,
         },
@@ -795,7 +829,7 @@ def run_seed(args):
             tracker.exp_results[iteration]["Zero-shot"]["selection"] = {
                 "generated_candidates": int(generation_round * args.batch_size),
                 "unique_eligible_candidates": int(len(pool_records)),
-                "selected_sequential_log_odds": candidate_scores,
+                "selected_mms": candidate_scores,
             }
             tracker.save_results(save_path)
             campaign.observe(sequences, scores)
