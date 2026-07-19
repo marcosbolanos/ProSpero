@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -14,7 +17,7 @@ import torch.nn.functional as F
 from scipy.stats import spearmanr
 
 from prospero.experiments_config import ALPHABETS
-from prospero.runners.run_zero_shot_prosst import AA20, ProSSTGenerator
+from prospero.runners.run_zero_shot_prosst import AA20, ProSSTGenerator, WT_SEQUENCES
 
 
 DEFAULT_TASKS = ("AAV", "AMIE", "E4B", "GFP", "LGK", "Pab1", "TEM", "UBE2I")
@@ -36,7 +39,7 @@ def get_parser():
     p.add_argument("--tasks", nargs="+", default=list(DEFAULT_TASKS))
     p.add_argument("--plms", nargs="+", choices=["evodiff", "esm", "prosst"], default=["evodiff", "esm", "prosst"])
     p.add_argument("--max_sequences", type=int, default=64)
-    p.add_argument("--chunk_size", type=int, default=64)
+    p.add_argument("--chunk_size", type=int, default=4)
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=142857)
     p.add_argument("--esm_model", default="facebook/esm2_t33_650M_UR50D")
@@ -80,9 +83,37 @@ def load_old_scores(task, sequences):
     return out
 
 
+def mutation_log_odds(reference, candidates, reference_log_probs, aa_to_col, covered_length=None):
+    """Score mutations from one fixed, unmasked reference distribution."""
+    length = len(reference) if covered_length is None else covered_length
+    reference = reference[:length]
+    reference_ids = np.asarray([aa_to_col[aa] for aa in reference], dtype=np.int64)
+    positions = np.arange(length)
+    scores = np.zeros(len(candidates), dtype=np.float64)
+    for owner, candidate in enumerate(candidates):
+        candidate = candidate[:length]
+        if len(candidate) != length:
+            raise ValueError("MMS requires equal reference and candidate lengths.")
+        candidate_ids = np.asarray([aa_to_col[aa] for aa in candidate], dtype=np.int64)
+        mutated = candidate_ids != reference_ids
+        scores[owner] = np.sum(
+            reference_log_probs[positions[mutated], candidate_ids[mutated]]
+            - reference_log_probs[positions[mutated], reference_ids[mutated]],
+            dtype=np.float64,
+        )
+    return scores
+
+
+def atomic_csv(frame, path):
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    frame.to_csv(temporary, index=False)
+    os.replace(temporary, path)
+
+
 def metric_row(task, plm, score_type, scores, fitness, seconds, n_scored, note=""):
     valid = np.isfinite(scores) & np.isfinite(fitness)
-    rho = spearmanr(scores[valid], fitness[valid]).statistic if valid.sum() >= 3 else np.nan
+    rho = float(cast(Any, spearmanr(scores[valid], fitness[valid])).statistic) if valid.sum() >= 3 else np.nan
     return {
         "task": task,
         "plm": plm,
@@ -104,6 +135,15 @@ class EvoDiffPLL:
         self.tokenizer = tokenizer
         self.device = torch.device(device)
         self.mask_id = tokenizer.mask_id
+        self.aa_to_col = {aa: int(tokenizer.tokenize([aa])[0]) for aa in AA20}
+
+    @torch.inference_mode()
+    def mms(self, reference, candidates):
+        tokens = torch.tensor(np.asarray(self.tokenizer.tokenize([reference]))[None, :], device=self.device)
+        timestep = torch.zeros(1, dtype=torch.long, device=self.device)
+        logits = self.model(tokens, timestep)[0, :, :20]
+        log_probs = F.log_softmax(logits, dim=-1).cpu().numpy()
+        return mutation_log_odds(reference, candidates, log_probs, self.aa_to_col)
 
     @torch.inference_mode()
     def score(self, sequences, chunk_size):
@@ -144,6 +184,17 @@ class ESMPLL:
         self.device = torch.device(device)
         self.aa_to_id = {aa: self.tokenizer.convert_tokens_to_ids(aa) for aa in AA20}
         self.mask_id = self.tokenizer.mask_token_id
+        self.aa_ids = torch.tensor([self.aa_to_id[aa] for aa in AA20], device=self.device)
+        self.aa_to_col = {aa: idx for idx, aa in enumerate(AA20)}
+
+    @torch.inference_mode()
+    def mms(self, reference, candidates):
+        encoded = self.tokenizer(reference, return_tensors="pt", add_special_tokens=True)
+        input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded["attention_mask"].to(self.device)
+        logits = self.model(input_ids=input_ids, attention_mask=attention_mask).logits[0, 1 : len(reference) + 1]
+        log_probs = F.log_softmax(logits[:, self.aa_ids], dim=-1).cpu().numpy()
+        return mutation_log_odds(reference, candidates, log_probs, self.aa_to_col)
 
     @torch.inference_mode()
     def score(self, sequences, chunk_size):
@@ -204,6 +255,10 @@ class ProSSTPLL:
         self.generator = ProSSTGenerator(args)
 
     @torch.inference_mode()
+    def mms(self, reference, candidates):
+        return self.generator.marginal_mutation_scores(reference, candidates)
+
+    @torch.inference_mode()
     def score(self, sequences, chunk_size):
         gen = self.generator
         scores = np.zeros(len(sequences), dtype=np.float64)
@@ -236,56 +291,102 @@ def main():
     args = get_parser().parse_args()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    summaries = []
-    old_rows = []
+    sample_dir = out_dir / "samples"
+    checkpoint_dir = out_dir / "checkpoints"
+    sample_dir.mkdir(exist_ok=True)
+    checkpoint_dir.mkdir(exist_ok=True)
+    config_path = out_dir / "run_config.json"
+    config = {
+        **vars(args),
+        "status": "running",
+        "mms_definition": "mutation log-odds from one fixed unmasked WT forward pass",
+        "pll_definition": "sum of leave-one-position-out conditional log likelihoods",
+    }
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
 
-    shared_models = {}
+    samples = {}
     for task in args.tasks:
-        frame = load_task_frame(task, args.max_sequences, args.seed)
-        sequences = frame["sequence"].tolist()
-        fitness = frame["fitness"].to_numpy(dtype=float)
-        old_scores = load_old_scores(task, sequences)
-        task_scores = frame.copy()
+        sample_path = sample_dir / f"{task}.csv"
+        if sample_path.exists():
+            frame = pd.read_csv(sample_path)
+        else:
+            frame = load_task_frame(task, args.max_sequences, args.seed)
+            atomic_csv(frame, sample_path)
+        persisted_sequences = frame["sequence"].astype(str).tolist()
+        if len(frame) != args.max_sequences or len(set(persisted_sequences)) != len(persisted_sequences):
+            raise ValueError(f"Invalid persisted sample at {sample_path}")
+        samples[task] = frame
 
-        for plm, scores in old_scores.items():
-            task_scores[f"{plm}_old_estimate"] = scores
-            summaries.append(metric_row(task, plm, "old_estimate", scores, fitness, 0.0, np.isfinite(scores).sum()))
+    def rebuild_summary():
+        rows = []
+        for path in sorted(checkpoint_dir.glob("*.json")):
+            payload = json.loads(path.read_text())
+            if payload.get("status") == "complete":
+                rows.extend(payload["metrics"])
+        summary = pd.DataFrame(rows)
+        if not summary.empty:
+            summary = summary.sort_values(["task", "plm", "score_type"])
+            atomic_csv(summary, out_dir / "summary_long.csv")
+        return summary
 
-        for plm in args.plms:
-            if plm == "evodiff":
-                scorer = shared_models.get("evodiff")
-                if scorer is None:
-                    scorer = EvoDiffPLL(args.device)
-                    shared_models["evodiff"] = scorer
-                note = "whole-sequence PLL under EvoDiff OA_DM_38M"
-            elif plm == "esm":
-                scorer = shared_models.get("esm")
-                if scorer is None:
-                    scorer = ESMPLL(args.esm_model, args.device)
-                    shared_models["esm"] = scorer
-                note = f"whole-sequence PLL under {args.esm_model}"
-            elif plm == "prosst":
-                scorer = ProSSTPLL(task, args.device, args.prosst_model)
-                note = "whole covered-region PLL under ProSST; LGK unstructured tail excluded"
-            else:
-                raise ValueError(plm)
-
+    for plm in args.plms:
+        shared_scorer = None
+        note = "whole covered-region PLL under ProSST; uncovered LGK tail excluded"
+        if plm == "evodiff":
+            shared_scorer = EvoDiffPLL(args.device)
+            note = "EvoDiff OA_DM_38M"
+        elif plm == "esm":
+            shared_scorer = ESMPLL(args.esm_model, args.device)
+            note = args.esm_model
+        for task in args.tasks:
+            checkpoint = checkpoint_dir / f"{task}__{plm}.json"
+            result_path = checkpoint_dir / f"{task}__{plm}.csv"
+            if checkpoint.exists() and result_path.exists():
+                payload = json.loads(checkpoint.read_text())
+                if payload.get("status") == "complete" and len(pd.read_csv(result_path)) == args.max_sequences:
+                    print(json.dumps({"event": "resume_skip", "task": task, "plm": plm}), flush=True)
+                    continue
+            scorer = shared_scorer if shared_scorer is not None else ProSSTPLL(task, args.device, args.prosst_model)
+            frame = samples[task].copy()
+            sequences = frame["sequence"].astype(str).tolist()
+            fitness = frame["fitness"].to_numpy(dtype=float)
+            print(json.dumps({"event": "start", "task": task, "plm": plm, "n": len(frame)}), flush=True)
+            mms_start = time.perf_counter()
+            mms = scorer.mms(WT_SEQUENCES[task], sequences)
+            torch.cuda.synchronize()
+            mms_seconds = time.perf_counter() - mms_start
+            pll_start = time.perf_counter()
+            pll = scorer.score(sequences, args.chunk_size)
+            torch.cuda.synchronize()
+            pll_seconds = time.perf_counter() - pll_start
+            frame["mms"] = mms
+            frame["pll"] = pll
+            metrics = [
+                metric_row(task, plm, "mms", mms, fitness, mms_seconds, np.isfinite(mms).sum(), "fixed unmasked WT marginals"),
+                metric_row(task, plm, "pll", pll, fitness, pll_seconds, np.isfinite(pll).sum(), note),
+            ]
+            atomic_csv(frame, result_path)
+            checkpoint.write_text(json.dumps({"status": "complete", "metrics": metrics}, indent=2), encoding="utf-8")
+            rebuild_summary()
+            print(json.dumps({"event": "complete", "task": task, "plm": plm, "mms": metrics[0]["spearman"], "pll": metrics[1]["spearman"]}), flush=True)
+            if shared_scorer is None:
+                del scorer
+                gc.collect()
+                torch.cuda.empty_cache()
+        if shared_scorer is not None:
+            del shared_scorer
+            gc.collect()
             torch.cuda.empty_cache()
-            start_time = time.perf_counter()
-            scores = scorer.score(sequences, args.chunk_size)
-            if args.device.startswith("cuda"):
-                torch.cuda.synchronize()
-            seconds = time.perf_counter() - start_time
-            task_scores[f"{plm}_proper_full_pll"] = scores
-            summaries.append(metric_row(task, plm, "proper_full_pll", scores, fitness, seconds, np.isfinite(scores).sum(), note))
-            task_scores.to_csv(out_dir / f"{task}.csv", index=False)
-            pd.DataFrame(summaries).to_csv(out_dir / "summary_long.csv", index=False)
 
-    summary = pd.DataFrame(summaries)
-    summary.to_csv(out_dir / "summary_long.csv", index=False)
+    summary = rebuild_summary()
+    expected = len(args.tasks) * len(args.plms) * 2
+    if len(summary) != expected:
+        raise RuntimeError(f"Expected {expected} metric rows, found {len(summary)}")
     pivot = summary.pivot_table(index=["plm", "score_type"], columns="task", values="spearman")
-    pivot.to_csv(out_dir / "spearman_pivot.csv")
-    (out_dir / "run_config.json").write_text(json.dumps(vars(args), indent=2, sort_keys=True), encoding="utf-8")
+    atomic_csv(pivot.reset_index(), out_dir / "spearman_pivot.csv")
+    config["status"] = "complete"
+    config_path.write_text(json.dumps(config, indent=2, sort_keys=True), encoding="utf-8")
+    (out_dir / "complete.json").write_text(json.dumps({"status": "complete", "metric_rows": len(summary)}, indent=2))
     print(pivot.round(4).to_string())
 
 
