@@ -30,11 +30,6 @@ DEFAULT_OG_ROOTS = {
     "UBE2I": ROOT / "outputs/variable_k_cnn_excl_set_noa6000_20260504_175400/UBE2I_cnn",
 }
 
-EVODIFF_ROOTS = {
-    task: (ROOT / "outputs/evodiff_grpo_all_landscapes_20260611", "mixed_explore_exploit")
-    for task in TASKS
-}
-
 DEFAULT_PROSST_ROOTS = {
     8: ROOT / "outputs/prosst_ft_all_landscapes_n8_grpo_cluster_20260604",
     128: ROOT / "outputs/prosst_ft_all_landscapes_n128_grpo_cluster_20260604",
@@ -53,7 +48,6 @@ class Method:
 
 METHODS = [
     Method("ProSST", COLORS["prosst"], "s", "prosst", Path(".")),
-    Method("EvoDiff", COLORS["evodiff"], "^", "evodiff", Path(".")),
     Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")),
 ]
 
@@ -74,9 +68,6 @@ def seed_paths(
 ) -> list[Path]:
     if method.root_kind == "prosst":
         return sorted((prosst_roots[budget] / task).glob("seed_*.pkl"))
-    if method.root_kind == "evodiff":
-        root, strategy = EVODIFF_ROOTS[task]
-        return sorted((root / f"n_samples_{budget}" / strategy / task).glob("seed_*.pkl"))
     if method.root_kind == "prospero":
         return sorted((prospero_roots[task] / f"n_samples_{budget}" / task).glob("seed_*.pkl"))
     raise ValueError(method.root_kind)

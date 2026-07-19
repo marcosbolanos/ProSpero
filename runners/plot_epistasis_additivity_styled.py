@@ -89,16 +89,7 @@ def plot_scatter(results):
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.text(
-        0.5,
-        0.962,
-        r"Each point compares the observed oracle fitness change of a double mutant to the sum of its two single-mutant effects.",
-        ha="center",
-        va="top",
-        fontsize=26,
-        color=COLORS["muted"],
-    )
-    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.91, wspace=0.42, hspace=0.52)
+    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.97, wspace=0.42, hspace=0.52)
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_additivity_oracle_scatter.png"
     pdf = OUT / "epistasis_additivity_oracle_scatter.pdf"
