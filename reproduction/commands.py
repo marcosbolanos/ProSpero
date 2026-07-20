@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-from prospero.reproduction.types import EpistasisStage, ProSperoStage, ReproductionContext, Stage, ZeroShotStage
+from prospero.reproduction.types import AlignmentStage, EpistasisStage, ProSperoStage, ReproductionContext, Stage, ZeroShotStage
 
 
 def csv_ints(values: Iterable[int]) -> str:
@@ -49,10 +49,17 @@ def prospero_commands(stage: ProSperoStage, context: ReproductionContext) -> lis
 
 
 def zero_shot_base(stage: ZeroShotStage, out: Path, task: str, seed: int, budget: int) -> list[str]:
-    return [
+    if stage.plm not in {"prosst", "evodiff"}:
+        raise ValueError(f"Unsupported optimization PLM: {stage.plm}")
+    module = (
+        "prospero.runners.run_zero_shot_prosst"
+        if stage.plm == "prosst"
+        else "prospero.runners.run_zero_shot_evodiff"
+    )
+    command = [
         sys.executable,
         "-m",
-        "prospero.runners.run_zero_shot_prosst",
+        module,
         "--task",
         task,
         "--results_dirpath",
@@ -67,8 +74,6 @@ def zero_shot_base(stage: ZeroShotStage, out: Path, task: str, seed: int, budget
         str(stage.batch_size),
         "--mask_budget",
         str(stage.mask_budget),
-        "--structure_tokens_dir",
-        stage.structure_tokens_dir,
         "--device",
         "cuda",
         "--debug_generation_trace",
@@ -76,12 +81,19 @@ def zero_shot_base(stage: ZeroShotStage, out: Path, task: str, seed: int, budget
         "--decoding_vocab",
         stage.decoding_vocab,
     ]
+    if stage.plm == "prosst":
+        command.extend(["--structure_tokens_dir", stage.structure_tokens_dir])
+    return command
+
+
+def zero_shot_root(stage: ZeroShotStage, context: ReproductionContext, budget: int) -> Path:
+    return context.results / f"0shotprot_{stage.plm}_{stage.name}_n{budget}"
 
 
 def zero_shot_commands(stage: ZeroShotStage, context: ReproductionContext) -> list[tuple[str, list[str]]]:
     commands = []
     for budget in stage.budgets:
-        out = context.results / f"0shotprot_prosst_{stage.name}_n{budget}"
+        out = zero_shot_root(stage, context, budget)
         for task in stage.tasks:
             for seed in stage.seeds:
                 if context.skip_existing and seed_done(out, task, seed):
@@ -89,7 +101,7 @@ def zero_shot_commands(stage: ZeroShotStage, context: ReproductionContext) -> li
                 cmd = zero_shot_base(stage, out, task, seed, budget)
                 if stage.finetune:
                     cmd.extend([
-                        "--finetune_prosst",
+                        f"--finetune_{stage.plm}",
                         "--finetune_epochs",
                         str(stage.finetune_epochs),
                         "--finetune_lr",
@@ -101,6 +113,37 @@ def zero_shot_commands(stage: ZeroShotStage, context: ReproductionContext) -> li
                     ])
                 commands.append((f"{stage.name}_n{budget}_{task}_seed{seed}", cmd))
     return commands
+
+
+def alignment_commands(stage: AlignmentStage, context: ReproductionContext) -> list[tuple[str, list[str]]]:
+    return [(
+        stage.name,
+        [
+            sys.executable,
+            "-m",
+            "prospero.runners.run_plm_full_pll_alignment",
+            "--out_dir",
+            str(context.results / "plm_mms_pll_alignment"),
+            "--tasks",
+            *stage.tasks,
+            "--plms",
+            *stage.plms,
+            "--max_sequences",
+            str(stage.max_sequences),
+            "--chunk_size",
+            str(stage.chunk_size),
+            "--seed",
+            str(stage.seed),
+            "--esm_model",
+            stage.esm_model,
+            "--prosst_model",
+            stage.prosst_model,
+            "--structure_tokens_dir",
+            stage.structure_tokens_dir,
+            "--device",
+            "cuda",
+        ],
+    )]
 
 
 def epistasis_commands(stage: EpistasisStage, context: ReproductionContext) -> list[tuple[str, list[str]]]:
@@ -132,6 +175,8 @@ def stage_commands(stage: Stage, context: ReproductionContext) -> list[tuple[str
         return zero_shot_commands(stage, context)
     if isinstance(stage, EpistasisStage):
         return epistasis_commands(stage, context)
+    if isinstance(stage, AlignmentStage):
+        return alignment_commands(stage, context)
     raise TypeError(f"Unsupported stage type: {type(stage)!r}")
 
 
@@ -141,34 +186,45 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
     tasks = tuple(dict.fromkeys(task for stage in stages for task in getattr(stage, "tasks", ())))
     budgets = sorted({budget for stage in stages for budget in getattr(stage, "budgets", ())})
 
-    main_zero_shot_stage = None
-    if "prosst_finetuned" in stage_names:
-        main_zero_shot_stage = "prosst_finetuned"
+    zero_shot_by_name = {
+        stage.name: stage for stage in stages if isinstance(stage, ZeroShotStage)
+    }
+    main_prosst = zero_shot_by_name.get("prosst_finetuned")
+    main_evodiff = zero_shot_by_name.get("evodiff_finetuned")
 
-    if main_zero_shot_stage is not None and "prospero_cnn_variable_k" in stage_names:
+    if main_prosst is not None and "prospero_cnn_variable_k" in stage_names:
+        main_plot_command = [
+            sys.executable,
+            "-m",
+            "prospero.runners.plot_combined_budget_mean_max",
+            "--output-dir",
+            str(context.plots / "main_optimization"),
+            "--prosst-k8-root",
+            str(zero_shot_root(main_prosst, context, 8)),
+            "--prosst-k128-root",
+            str(zero_shot_root(main_prosst, context, 128)),
+            "--prospero-results-dir",
+            str(context.results / "prospero"),
+        ]
+        if main_evodiff is not None:
+            main_plot_command.extend([
+                "--evodiff-k8-root",
+                str(zero_shot_root(main_evodiff, context, 8)),
+                "--evodiff-k128-root",
+                str(zero_shot_root(main_evodiff, context, 128)),
+            ])
+        else:
+            main_plot_command.append("--no-evodiff")
         commands.append((
-            f"plot_main_{main_zero_shot_stage}",
-            [
-                sys.executable,
-                "-m",
-                "prospero.runners.plot_simplified_zero_shotprot_mean_max",
-                "--output-dir",
-                str(context.plots / f"main_{main_zero_shot_stage}"),
-                "--prosst-k8-root",
-                str(context.results / f"0shotprot_prosst_{main_zero_shot_stage}_n8"),
-                "--prosst-k128-root",
-                str(context.results / f"0shotprot_prosst_{main_zero_shot_stage}_n128"),
-                "--prospero-results-dir",
-                str(context.results / "prospero"),
-                "--no-evodiff",
-            ],
+            "plot_main_optimization",
+            main_plot_command,
         ))
 
     for stage in stages:
         if not isinstance(stage, ZeroShotStage):
             continue
         for budget in stage.budgets:
-            run_dir = context.results / f"0shotprot_prosst_{stage.name}_n{budget}"
+            run_dir = zero_shot_root(stage, context, budget)
             if context.dry_run or run_dir.exists():
                 commands.append((
                     f"plot_hist_{stage.name}_n{budget}",
@@ -181,7 +237,7 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
                         "--method_label",
                         f"{stage.plot_label}, K={budget}",
                         "--output_dir",
-                        str(context.plots / "round_histograms" / stage.name / f"k{budget}"),
+                    str(context.plots / "round_histograms" / stage.plm / stage.name / f"k{budget}"),
                         "--tasks",
                         *stage.tasks,
                         "--seeds",
@@ -215,14 +271,31 @@ def plot_commands(stages: list[Stage], context: ReproductionContext) -> list[tup
                     "--output-dir",
                     str(context.plots / f"vocab_ablation_k{budget}"),
                     "--restricted-root",
-                    str(context.results / f"0shotprot_prosst_prosst_finetuned_n{budget}"),
+                    str(zero_shot_root(zero_shot_by_name["prosst_finetuned"], context, budget)),
                     "--unrestricted-root",
-                    str(context.results / f"0shotprot_prosst_prosst_finetuned_unrestricted_n{budget}"),
+                    str(zero_shot_root(zero_shot_by_name["prosst_finetuned_unrestricted"], context, budget)),
                     "--budget",
                     str(budget),
                     "--tasks",
                     *(tasks or ("AAV", "LGK")),
                 ],
             ))
+
+    commands.append((
+        "summarize_paper_results",
+        [
+            sys.executable,
+            "-m",
+            "prospero.runners.summarize_reproduction",
+            "--results-root",
+            str(context.results),
+            "--output-dir",
+            str(context.root / "tables"),
+            "--tasks",
+            *(tasks or ("AAV", "LGK", "GFP", "Pab1", "AMIE", "E4B", "TEM", "UBE2I")),
+            "--budgets",
+            *(str(budget) for budget in (budgets or [8, 128])),
+        ],
+    ))
 
     return commands

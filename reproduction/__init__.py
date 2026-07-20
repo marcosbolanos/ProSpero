@@ -1,5 +1,6 @@
 from prospero.reproduction.runner import run_reproduction
 from prospero.reproduction.types import (
+    AlignmentStage,
     EpistasisStage,
     ProSperoStage,
     ReproductionRecipe,
@@ -8,6 +9,7 @@ from prospero.reproduction.types import (
 )
 
 __all__ = [
+    "AlignmentStage",
     "EpistasisStage",
     "ProSperoStage",
     "ReproductionRecipe",

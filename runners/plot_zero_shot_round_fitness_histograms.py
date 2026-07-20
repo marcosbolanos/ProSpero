@@ -128,15 +128,17 @@ def load_explicit_run_rounds(seed_paths, task):
         with seed_path.open("rb") as handle:
             results = pickle.load(handle)
 
-        known = list(initial_scores)
         score_by_seq = {}
-        for seq, score in known:
+        for seq, score in initial_scores:
             if seq not in score_by_seq or score > score_by_seq[seq]:
                 score_by_seq[seq] = score
 
         wt_score = score_by_seq.get(wt)
         if wt_score is None:
             raise ValueError(f"WT sequence for {task} was not found in the initial dataset.")
+        # The campaign starts from WT only; other offline labels are reporting data,
+        # not information available to optimization or incumbent reconstruction.
+        known = [(wt, wt_score)]
         starting_score = wt_score
 
         for round_idx in range(1, 11):

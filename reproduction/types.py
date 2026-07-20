@@ -19,6 +19,7 @@ class ProSperoStage:
 class ZeroShotStage:
     name: str
     tasks: tuple[str, ...]
+    plm: str = "prosst"
     plot_label: str = "0shotProt (w/ ProSST)"
     budgets: tuple[int, ...] = (8, 128)
     seeds: tuple[int, ...] = (1, 2, 3, 4, 5)
@@ -35,6 +36,19 @@ class ZeroShotStage:
 
 
 @dataclass(frozen=True)
+class AlignmentStage:
+    name: str = "plm_mms_pll_alignment"
+    tasks: tuple[str, ...] = ()
+    plms: tuple[str, ...] = ("evodiff", "esm", "prosst")
+    max_sequences: int = 128
+    chunk_size: int = 4
+    seed: int = 142857
+    esm_model: str = "facebook/esm2_t33_650M_UR50D"
+    prosst_model: str = "AI4Protein/ProSST-2048"
+    structure_tokens_dir: str = "outputs/prosst_structure_tokens"
+
+
+@dataclass(frozen=True)
 class EpistasisStage:
     name: str = "epistasis_additivity"
     tasks: tuple[str, ...] = ()
@@ -43,7 +57,7 @@ class EpistasisStage:
     oracle_batch_size: int = 128
 
 
-Stage = ProSperoStage | ZeroShotStage | EpistasisStage
+Stage = ProSperoStage | ZeroShotStage | AlignmentStage | EpistasisStage
 
 
 @dataclass(frozen=True)

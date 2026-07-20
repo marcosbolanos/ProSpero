@@ -46,12 +46,6 @@ class Method:
     strategy: str | None = None
 
 
-METHODS = [
-    Method("ProSST", COLORS["prosst"], "s", "prosst", Path(".")),
-    Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")),
-]
-
-
 def pastel(hex_color: str, amount: float = 0.62) -> str:
     hex_color = hex_color.lstrip("#")
     rgb = np.array([int(hex_color[i : i + 2], 16) for i in (0, 2, 4)], dtype=float)
@@ -64,10 +58,15 @@ def seed_paths(
     task: str,
     budget: int,
     prosst_roots: dict[int, Path],
+    evodiff_roots: dict[int, Path] | None,
     prospero_roots: dict[str, Path],
 ) -> list[Path]:
     if method.root_kind == "prosst":
         return sorted((prosst_roots[budget] / task).glob("seed_*.pkl"))
+    if method.root_kind == "evodiff":
+        if evodiff_roots is None:
+            return []
+        return sorted((evodiff_roots[budget] / task).glob("seed_*.pkl"))
     if method.root_kind == "prospero":
         return sorted((prospero_roots[task] / f"n_samples_{budget}" / task).glob("seed_*.pkl"))
     raise ValueError(method.root_kind)
@@ -92,13 +91,18 @@ def aggregate(
     task: str,
     budget: int,
     prosst_roots: dict[int, Path],
+    evodiff_roots: dict[int, Path] | None,
     prospero_roots: dict[str, Path],
 ):
-    rows = [load_seed(path) for path in seed_paths(method, task, budget, prosst_roots, prospero_roots)]
+    rows = [
+        load_seed(path)
+        for path in seed_paths(method, task, budget, prosst_roots, evodiff_roots, prospero_roots)
+    ]
     xs = np.arange(1, 11)
     means, sems, counts = [], [], []
     for it in xs:
-        vals = np.array([row[it] for row in rows if it in row], dtype=float)
+        iteration = int(it)
+        vals = np.array([row[iteration] for row in rows if iteration in row], dtype=float)
         counts.append(int(len(vals)))
         if len(vals) == 0:
             means.append(np.nan)
@@ -193,10 +197,10 @@ def add_zoom_inset(
     return {"xlim": (x_min, x_max), "ylim": (y_min - pad, y_max + pad)}
 
 
-def legend_handles():
+def legend_handles(methods):
     handles = []
     labels = []
-    for method in METHODS:
+    for method in methods:
         handles.append(
             Line2D(
                 [0],
@@ -226,9 +230,20 @@ def plot(
     output_dir: Path = OUT,
     prosst_k8_root: Path = DEFAULT_PROSST_ROOTS[8],
     prosst_k128_root: Path = DEFAULT_PROSST_ROOTS[128],
+    evodiff_k8_root: Path | None = None,
+    evodiff_k128_root: Path | None = None,
     prospero_results_dir: Path | None = None,
 ):
     prosst_roots = {8: Path(prosst_k8_root), 128: Path(prosst_k128_root)}
+    evodiff_roots = (
+        {8: Path(evodiff_k8_root), 128: Path(evodiff_k128_root)}
+        if evodiff_k8_root is not None and evodiff_k128_root is not None
+        else None
+    )
+    methods = [Method("ProSST", COLORS["prosst"], "s", "prosst", Path("."))]
+    if evodiff_roots is not None:
+        methods.append(Method("EvoDiff", COLORS["evodiff"], "^", "evodiff", Path(".")))
+    methods.append(Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")))
     prospero_roots = (
         {task: Path(prospero_results_dir) / f"{task}_cnn" for task in TASKS}
         if prospero_results_dir is not None
@@ -250,9 +265,16 @@ def plot(
     for idx, task in enumerate(TASKS):
         ax = axes[idx // 4, idx % 4]
         series = []
-        for method in METHODS:
+        for method in methods:
             for budget in BUDGETS:
-                x, y, e, counts = aggregate(method, task, budget, prosst_roots, prospero_roots)
+                x, y, e, counts = aggregate(
+                    method,
+                    task,
+                    budget,
+                    prosst_roots,
+                    evodiff_roots,
+                    prospero_roots,
+                )
                 valid = np.isfinite(y)
                 if not valid.any():
                     summary.append(f"SKIP {task} {method.label} K={budget}: no data")
@@ -300,12 +322,12 @@ def plot(
         if idx // 4 == 1:
             ax.set_xlabel("Optimization round")
 
-    handles, labels = legend_handles()
+    handles, labels = legend_handles(methods)
     fig.legend(
         handles,
         labels,
         loc="upper center",
-        ncol=len(METHODS),
+        ncol=len(methods),
         bbox_to_anchor=(0.5, 1.01),
         frameon=False,
         columnspacing=1.8,
@@ -340,6 +362,8 @@ def get_parser():
     parser.add_argument("--output-dir", type=Path, default=OUT)
     parser.add_argument("--prosst-k8-root", type=Path, default=DEFAULT_PROSST_ROOTS[8])
     parser.add_argument("--prosst-k128-root", type=Path, default=DEFAULT_PROSST_ROOTS[128])
+    parser.add_argument("--evodiff-k8-root", type=Path, default=None)
+    parser.add_argument("--evodiff-k128-root", type=Path, default=None)
     parser.add_argument("--prospero-results-dir", type=Path, default=None)
     return parser
 
@@ -350,6 +374,8 @@ def main():
         output_dir=args.output_dir,
         prosst_k8_root=args.prosst_k8_root,
         prosst_k128_root=args.prosst_k128_root,
+        evodiff_k8_root=args.evodiff_k8_root,
+        evodiff_k128_root=args.evodiff_k128_root,
         prospero_results_dir=args.prospero_results_dir,
     )
     print(f"Wrote {len(paths)} plot files")

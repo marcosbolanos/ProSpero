@@ -16,23 +16,12 @@ import torch
 import torch.nn.functional as F
 from scipy.stats import spearmanr
 
+from prospero.dataset import RegressionDataset
 from prospero.experiments_config import ALPHABETS
 from prospero.runners.run_zero_shot_prosst import AA20, ProSSTGenerator, WT_SEQUENCES
 
 
 DEFAULT_TASKS = ("AAV", "AMIE", "E4B", "GFP", "LGK", "Pab1", "TEM", "UBE2I")
-OLD_SCORE_FILES = {
-    "evodiff": Path("outputs/evodiff_zero_shot_alignment_20260602/predictive_scores"),
-    "esm": Path("outputs/esm2_650m_zero_shot_alignment_20260603/predictive_scores"),
-    "prosst": Path("outputs/prosst_zero_shot_alignment_20260603/predictive_scores"),
-}
-OLD_SCORE_COLUMNS = {
-    "evodiff": "masked_marginals",
-    "esm": "masked_marginals",
-    "prosst": "prosst_log_odds",
-}
-
-
 def get_parser():
     p = argparse.ArgumentParser(description="Compare mutated-position PLM scores with proper whole-sequence PLL.")
     p.add_argument("--out_dir", default="outputs/plm_full_pll_alignment_20260609")
@@ -44,6 +33,7 @@ def get_parser():
     p.add_argument("--seed", type=int, default=142857)
     p.add_argument("--esm_model", default="facebook/esm2_t33_650M_UR50D")
     p.add_argument("--prosst_model", default="AI4Protein/ProSST-2048")
+    p.add_argument("--structure_tokens_dir", default="outputs/prosst_structure_tokens")
     return p
 
 
@@ -52,35 +42,23 @@ def normalize_sequence(seq):
 
 
 def load_task_frame(task, max_sequences, seed):
-    base_path = OLD_SCORE_FILES["esm"] / f"{task}.csv"
-    if not base_path.exists():
-        base_path = OLD_SCORE_FILES["prosst"] / f"{task}.csv"
-    if not base_path.exists():
-        base_path = OLD_SCORE_FILES["evodiff"] / f"{task}.csv"
-    if not base_path.exists():
-        raise FileNotFoundError(f"No old score CSV found for {task}.")
-
-    df = pd.read_csv(base_path)
-    df["sequence"] = df["sequence"].map(normalize_sequence)
+    dataset = RegressionDataset(task)
+    sequences = [normalize_sequence(sequence) for sequence in dataset.valid]
+    fitness = np.asarray(dataset.valid_scores, dtype=float)
+    wild_type = WT_SEQUENCES[task]
+    df = pd.DataFrame(
+        {
+            "task": task,
+            "split": "valid",
+            "sequence": sequences,
+            "fitness": fitness,
+            "n_mutations": [sum(a != b for a, b in zip(sequence, wild_type)) for sequence in sequences],
+        }
+    )
     df = df.drop_duplicates("sequence", keep="first")
     if max_sequences and len(df) > max_sequences:
         df = df.sample(n=max_sequences, random_state=seed).sort_values("sequence")
     return df[["task", "split", "sequence", "fitness", "n_mutations"]].reset_index(drop=True)
-
-
-def load_old_scores(task, sequences):
-    out = {}
-    wanted = pd.DataFrame({"sequence": list(sequences)})
-    for plm, folder in OLD_SCORE_FILES.items():
-        path = folder / f"{task}.csv"
-        column = OLD_SCORE_COLUMNS[plm]
-        if not path.exists():
-            continue
-        df = pd.read_csv(path)
-        df["sequence"] = df["sequence"].map(normalize_sequence)
-        merged = wanted.merge(df[["sequence", column]], on="sequence", how="left")
-        out[plm] = merged[column].to_numpy(dtype=float)
-    return out
 
 
 def mutation_log_odds(reference, candidates, reference_log_probs, aa_to_col, covered_length=None):
@@ -234,7 +212,7 @@ class ESMPLL:
 
 
 class ProSSTPLL:
-    def __init__(self, task, device, model_path):
+    def __init__(self, task, device, model_path, structure_tokens_dir):
         args = SimpleNamespace(
             task=task,
             device=device,
@@ -242,7 +220,7 @@ class ProSSTPLL:
             finetune_prosst=False,
             alphabet="CHARGE",
             decoding_vocab="restricted",
-            structure_tokens_dir="outputs/prosst_structure_tokens",
+            structure_tokens_dir=structure_tokens_dir,
             structure_vocab_size="2048",
             entropy_chunk_size=16,
             entropy_quantile=0.5,
@@ -346,7 +324,11 @@ def main():
                 if payload.get("status") == "complete" and len(pd.read_csv(result_path)) == args.max_sequences:
                     print(json.dumps({"event": "resume_skip", "task": task, "plm": plm}), flush=True)
                     continue
-            scorer = shared_scorer if shared_scorer is not None else ProSSTPLL(task, args.device, args.prosst_model)
+            scorer = (
+                shared_scorer
+                if shared_scorer is not None
+                else ProSSTPLL(task, args.device, args.prosst_model, args.structure_tokens_dir)
+            )
             frame = samples[task].copy()
             sequences = frame["sequence"].astype(str).tolist()
             fitness = frame["fitness"].to_numpy(dtype=float)

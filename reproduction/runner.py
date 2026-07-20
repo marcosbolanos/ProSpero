@@ -9,6 +9,7 @@ from pathlib import Path
 
 from prospero.reproduction.commands import plot_commands, stage_commands
 from prospero.reproduction.types import (
+    AlignmentStage,
     EpistasisStage,
     ProSperoStage,
     ReproductionContext,
@@ -94,6 +95,9 @@ def apply_filters(stage: Stage, options: RuntimeOptions) -> Stage | None:
     if isinstance(stage, EpistasisStage):
         filtered = replace(stage, tasks=_filter_tuple(stage.tasks, options.task_filter))
         return filtered if filtered.tasks else None
+    if isinstance(stage, AlignmentStage):
+        filtered = replace(stage, tasks=_filter_tuple(stage.tasks, options.task_filter))
+        return filtered if filtered.tasks else None
     raise TypeError(type(stage))
 
 
@@ -131,11 +135,16 @@ def print_plan(context: ReproductionContext, stages: list[Stage], options: Runti
         elif isinstance(stage, ZeroShotStage):
             ft = f"FT {stage.finetune_epochs} epochs, lr={stage.finetune_lr:g}, KL={stage.lambda_kl:g}" if stage.finetune else "no fine-tuning"
             print(
-                f"  {idx}. {stage.name}: {stage.plot_label}, vocab={stage.decoding_vocab}, "
+                f"  {idx}. {stage.name}: {stage.plot_label}, PLM={stage.plm}, vocab={stage.decoding_vocab}, "
                 f"mask=mixed/K{stage.mask_budget}, {ft}, budgets={stage.budgets}, seeds={stage.seeds}, tasks={stage.tasks}"
             )
         elif isinstance(stage, EpistasisStage):
             print(f"  {idx}. {stage.name}: samples_per_pair_type={stage.samples_per_pair_type}, tasks={stage.tasks}")
+        elif isinstance(stage, AlignmentStage):
+            print(
+                f"  {idx}. {stage.name}: PLMs={stage.plms}, n={stage.max_sequences}, "
+                f"tasks={stage.tasks}"
+            )
     if options.plots_only:
         print("[reproduce] plots-only: experiment commands will be skipped")
     if options.no_plots:
