@@ -1,51 +1,59 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
+
+from prospero.optimization.types import (
+    DecodingVocabulary,
+    OnlineAdaptationConfig,
+)
+
+
+class ProteinLanguageModel(str, Enum):
+    PROSST = "prosst"
+    EVODIFF = "evodiff"
 
 
 @dataclass(frozen=True)
 class ProSperoStage:
-    name: str = "prospero_cnn_variable_k"
+    name: str = "prospero_cnn"
     tasks: tuple[str, ...] = ()
-    budgets: tuple[int, ...] = (8, 128)
+    query_budgets: tuple[int, ...] = (8, 128)
     seeds: tuple[int, ...] = (1, 2, 3, 4, 5)
-    surrogate_arch: str = "cnn"
-    n_iters: int = 10
+    rounds: int = 10
     max_workers: int = 5
 
 
 @dataclass(frozen=True)
-class ZeroShotStage:
+class PlmOptimizationStage:
     name: str
     tasks: tuple[str, ...]
-    plm: str = "prosst"
+    model: ProteinLanguageModel = ProteinLanguageModel.PROSST
     plot_label: str = "0shotProt (w/ ProSST)"
-    budgets: tuple[int, ...] = (8, 128)
+    query_budgets: tuple[int, ...] = (8, 128)
     seeds: tuple[int, ...] = (1, 2, 3, 4, 5)
-    finetune: bool = True
-    decoding_vocab: str = "restricted"
+    adaptation: OnlineAdaptationConfig | None = field(
+        default_factory=OnlineAdaptationConfig
+    )
+    decoding_vocabulary: DecodingVocabulary = DecodingVocabulary.RESTRICTED
     mask_budget: int = 4
-    n_iters: int = 10
-    batch_size: int = 64
-    finetune_epochs: int = 5
-    finetune_lr: float = 3e-5
-    lambda_kl: float = 2.0
-    finetune_batch_size: int = 1
-    structure_tokens_dir: str = "outputs/prosst_structure_tokens"
+    rounds: int = 10
+    candidate_batch_size: int = 64
+    structure_tokens_directory: str = "outputs/prosst_structure_tokens"
 
 
 @dataclass(frozen=True)
-class AlignmentStage:
-    name: str = "plm_mms_pll_alignment"
+class ScoringBenchmarkStage:
+    name: str = "plm_scoring_benchmark"
     tasks: tuple[str, ...] = ()
-    plms: tuple[str, ...] = ("evodiff", "esm", "prosst")
+    models: tuple[str, ...] = ("evodiff", "esm", "prosst")
     max_sequences: int = 128
     chunk_size: int = 4
     seed: int = 142857
     esm_model: str = "facebook/esm2_t33_650M_UR50D"
     prosst_model: str = "AI4Protein/ProSST-2048"
-    structure_tokens_dir: str = "outputs/prosst_structure_tokens"
+    structure_tokens_directory: str = "outputs/prosst_structure_tokens"
 
 
 @dataclass(frozen=True)
@@ -57,7 +65,7 @@ class EpistasisStage:
     oracle_batch_size: int = 128
 
 
-Stage = ProSperoStage | ZeroShotStage | AlignmentStage | EpistasisStage
+Stage = ProSperoStage | PlmOptimizationStage | ScoringBenchmarkStage | EpistasisStage
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,10 @@ class RuntimeOptions:
     seed_filter: tuple[int, ...] | None = None
     budget_filter: tuple[int, ...] | None = None
     extra_manifest: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.plots_only and self.no_plots:
+            raise ValueError("plots_only and no_plots cannot both be enabled.")
 
 
 @dataclass(frozen=True)

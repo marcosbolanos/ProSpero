@@ -14,26 +14,8 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from prospero.plotting_style import COLORS, set_prospero_style
 
 
-ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "outputs" / "rl_vs_og" / "zero_shotprot_combined_budgets"
 TASKS = ["AAV", "LGK", "GFP", "Pab1", "AMIE", "E4B", "TEM", "UBE2I"]
 BUDGETS = [128, 8]
-
-DEFAULT_OG_ROOTS = {
-    "AAV": ROOT / "outputs/variable_k_cnn_excl_set_noa6000_20260504_175400/AAV_cnn",
-    "LGK": ROOT / "outputs/out_240226_lgk_cnn",
-    "GFP": ROOT / "outputs/out_240226_gfp_cnn",
-    "Pab1": ROOT / "outputs/out_240226_pab1_cnn",
-    "AMIE": ROOT / "outputs/out_240226_amie_cnn",
-    "E4B": ROOT / "outputs/variable_k_cnn_excl_set_noa6000_20260504_175400/E4B_cnn",
-    "TEM": ROOT / "outputs/out_240226_tem_cnn",
-    "UBE2I": ROOT / "outputs/variable_k_cnn_excl_set_noa6000_20260504_175400/UBE2I_cnn",
-}
-
-DEFAULT_PROSST_ROOTS = {
-    8: ROOT / "outputs/prosst_ft_all_landscapes_n8_grpo_cluster_20260604",
-    128: ROOT / "outputs/prosst_ft_all_landscapes_n128_grpo_cluster_20260604",
-}
 
 
 @dataclass(frozen=True)
@@ -42,8 +24,6 @@ class Method:
     color: str
     marker: str
     root_kind: str
-    root: Path
-    strategy: str | None = None
 
 
 def pastel(hex_color: str, amount: float = 0.62) -> str:
@@ -68,7 +48,7 @@ def seed_paths(
             return []
         return sorted((evodiff_roots[budget] / task).glob("seed_*.pkl"))
     if method.root_kind == "prospero":
-        return sorted((prospero_roots[task] / f"n_samples_{budget}" / task).glob("seed_*.pkl"))
+        return sorted((prospero_roots[task] / f"k_{budget}" / task).glob("seed_*.pkl"))
     raise ValueError(method.root_kind)
 
 
@@ -96,24 +76,32 @@ def aggregate(
 ):
     rows = [
         load_seed(path)
-        for path in seed_paths(method, task, budget, prosst_roots, evodiff_roots, prospero_roots)
+        for path in seed_paths(
+            method, task, budget, prosst_roots, evodiff_roots, prospero_roots
+        )
     ]
     xs = np.arange(1, 11)
     means, sems, counts = [], [], []
     for it in xs:
         iteration = int(it)
-        vals = np.array([row[iteration] for row in rows if iteration in row], dtype=float)
+        vals = np.array(
+            [row[iteration] for row in rows if iteration in row], dtype=float
+        )
         counts.append(int(len(vals)))
         if len(vals) == 0:
             means.append(np.nan)
             sems.append(np.nan)
             continue
         means.append(float(vals.mean()))
-        sems.append(float(vals.std(ddof=1) / math.sqrt(len(vals))) if len(vals) > 1 else 0.0)
+        sems.append(
+            float(vals.std(ddof=1) / math.sqrt(len(vals))) if len(vals) > 1 else 0.0
+        )
     return xs, np.array(means), np.array(sems), counts
 
 
-def should_add_inset(series: list[tuple[Method, int, np.ndarray, np.ndarray, np.ndarray]]) -> bool:
+def should_add_inset(
+    series: list[tuple[Method, int, np.ndarray, np.ndarray, np.ndarray]],
+) -> bool:
     all_values = []
     late_values = []
     for _, _, x, y, e in series:
@@ -193,7 +181,9 @@ def add_zoom_inset(
         spine.set_visible(True)
         spine.set_linewidth(0.9)
         spine.set_color(COLORS["muted"])
-    mark_inset(ax, axins, loc1=2, loc2=4, fc="none", ec=COLORS["muted"], lw=0.85, alpha=0.85)
+    mark_inset(
+        ax, axins, loc1=2, loc2=4, fc="none", ec=COLORS["muted"], lw=0.85, alpha=0.85
+    )
     return {"xlim": (x_min, x_max), "ylim": (y_min - pad, y_max + pad)}
 
 
@@ -227,12 +217,12 @@ def legend_handles(methods):
 
 
 def plot(
-    output_dir: Path = OUT,
-    prosst_k8_root: Path = DEFAULT_PROSST_ROOTS[8],
-    prosst_k128_root: Path = DEFAULT_PROSST_ROOTS[128],
+    output_dir: Path,
+    prosst_k8_root: Path,
+    prosst_k128_root: Path,
+    prospero_results_dir: Path,
     evodiff_k8_root: Path | None = None,
     evodiff_k128_root: Path | None = None,
-    prospero_results_dir: Path | None = None,
 ):
     prosst_roots = {8: Path(prosst_k8_root), 128: Path(prosst_k128_root)}
     evodiff_roots = (
@@ -240,15 +230,13 @@ def plot(
         if evodiff_k8_root is not None and evodiff_k128_root is not None
         else None
     )
-    methods = [Method("ProSST", COLORS["prosst"], "s", "prosst", Path("."))]
+    methods = [Method("ProSST", COLORS["prosst"], "s", "prosst")]
     if evodiff_roots is not None:
-        methods.append(Method("EvoDiff", COLORS["evodiff"], "^", "evodiff", Path(".")))
-    methods.append(Method("ProSpero", COLORS["ink"], "o", "prospero", Path(".")))
-    prospero_roots = (
-        {task: Path(prospero_results_dir) / f"{task}_cnn" for task in TASKS}
-        if prospero_results_dir is not None
-        else DEFAULT_OG_ROOTS
-    )
+        methods.append(Method("EvoDiff", COLORS["evodiff"], "^", "evodiff"))
+    methods.append(Method("ProSpero", COLORS["ink"], "o", "prospero"))
+    prospero_roots = {
+        task: Path(prospero_results_dir) / f"{task}_cnn" for task in TASKS
+    }
     set_prospero_style()
     plt.rcParams.update(
         {
@@ -334,17 +322,21 @@ def plot(
         handlelength=2.2,
         handletextpad=0.55,
     )
-    fig.subplots_adjust(left=0.07, right=0.985, bottom=0.09, top=0.80, wspace=0.42, hspace=0.42)
+    fig.subplots_adjust(
+        left=0.07, right=0.985, bottom=0.09, top=0.80, wspace=0.42, hspace=0.42
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = [
-        output_dir / "zero_shotprot_combined_k8_k128_mean_max.png",
-        output_dir / "zero_shotprot_combined_k8_k128_mean_max.pdf",
-        output_dir / "zero_shotprot_combined_k8_k128_mean_max.svg",
+        output_dir / "optimization_trajectories_k8_k128.png",
+        output_dir / "optimization_trajectories_k8_k128.pdf",
+        output_dir / "optimization_trajectories_k8_k128.svg",
     ]
     for path in paths:
-        fig.savefig(path, dpi=320 if path.suffix == ".png" else None, bbox_inches="tight")
+        fig.savefig(
+            path, dpi=320 if path.suffix == ".png" else None, bbox_inches="tight"
+        )
     plt.close(fig)
     (output_dir / "plot_summary.txt").write_text(
         "Written plots:\n"
@@ -357,14 +349,16 @@ def plot(
     return paths
 
 
-def get_parser():
-    parser = argparse.ArgumentParser(description="Plot K=8 and K=128 mean-max trajectories.")
-    parser.add_argument("--output-dir", type=Path, default=OUT)
-    parser.add_argument("--prosst-k8-root", type=Path, default=DEFAULT_PROSST_ROOTS[8])
-    parser.add_argument("--prosst-k128-root", type=Path, default=DEFAULT_PROSST_ROOTS[128])
+def get_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Plot K=8 and K=128 mean-max trajectories."
+    )
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--prosst-k8-root", type=Path, required=True)
+    parser.add_argument("--prosst-k128-root", type=Path, required=True)
     parser.add_argument("--evodiff-k8-root", type=Path, default=None)
     parser.add_argument("--evodiff-k128-root", type=Path, default=None)
-    parser.add_argument("--prospero-results-dir", type=Path, default=None)
+    parser.add_argument("--prospero-results-dir", type=Path, required=True)
     return parser
 
 

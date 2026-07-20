@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, TypedDict, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,6 +43,13 @@ class DoubleMutationSample:
     epistasis_e_ij: float
 
 
+class DoubleSamplingPreparation(TypedDict):
+    index_by_bin: dict[str, list[int]]
+    pair_index_metadata: list[tuple[str, int, int]]
+    doubles_to_score: list[str]
+    sampling_meta: dict[str, Any]
+
+
 def _fitness(oracle, task: str, sequences: list[str]) -> np.ndarray:
     if task.startswith("D_SHIFT"):
         values = oracle.get_fitness(sequences)
@@ -65,7 +73,9 @@ def _batched_oracle_scores(
     return np.concatenate(outputs, axis=0).astype(np.float32, copy=False)
 
 
-def _enumerate_single_mutants(wt_sequence: str) -> tuple[list[str], list[tuple[int, str, str]]]:
+def _enumerate_single_mutants(
+    wt_sequence: str,
+) -> tuple[list[str], list[tuple[int, str, str]]]:
     sequences: list[str] = []
     metadata: list[tuple[int, str, str]] = []
     for idx, wt_residue in enumerate(wt_sequence):
@@ -116,7 +126,9 @@ def _build_single_mutation_records(
     return out
 
 
-def _double_sequence(wt_sequence: str, first: SingleMutation, second: SingleMutation) -> str:
+def _double_sequence(
+    wt_sequence: str, first: SingleMutation, second: SingleMutation
+) -> str:
     seq = list(wt_sequence)
     seq[first.position] = first.mutant_residue
     seq[second.position] = second.mutant_residue
@@ -146,7 +158,7 @@ def _sample_pair_indices(
             continue
         if require_distinct_positions and singles[i].position == singles[j].position:
             continue
-        key = (i, j) if not same_group else tuple(sorted((i, j)))
+        key: tuple[int, int] = (i, j) if not same_group else (min(i, j), max(i, j))
         if key in seen:
             continue
         seen.add(key)
@@ -171,7 +183,7 @@ def _sample_double_mutations(
     wt_sequence: str,
     singles: list[SingleMutation],
     n_per_group: int,
-) -> tuple[list[DoubleMutationSample], dict[str, object]]:
+) -> DoubleSamplingPreparation:
     index_by_bin = {"bad": [], "neutral": [], "good": []}
     for idx, mutation in enumerate(singles):
         index_by_bin[mutation.effect_bin].append(idx)
@@ -183,8 +195,7 @@ def _sample_double_mutations(
         ("good_x_good", "good", "good", True),
     ]
 
-    samples: list[DoubleMutationSample] = []
-    sampling_meta: dict[str, object] = {"replacement_used": {}}
+    replacement_by_pair: dict[str, bool] = {}
     doubles_to_score: list[str] = []
     pair_index_metadata: list[tuple[str, int, int]] = []
 
@@ -198,19 +209,21 @@ def _sample_double_mutations(
             singles=singles,
             same_group=same_group,
         )
-        sampling_meta["replacement_used"][pair_name] = bool(replacement_used)
+        replacement_by_pair[pair_name] = bool(replacement_used)
         for i, j in pairs:
             first = singles[i]
             second = singles[j]
             doubles_to_score.append(_double_sequence(wt_sequence, first, second))
             pair_index_metadata.append((pair_name, i, j))
 
-    sampling_meta["n_pairs_total"] = len(doubles_to_score)
-    return samples, {
+    return {
         "index_by_bin": index_by_bin,
         "pair_index_metadata": pair_index_metadata,
         "doubles_to_score": doubles_to_score,
-        "sampling_meta": sampling_meta,
+        "sampling_meta": {
+            "replacement_used": replacement_by_pair,
+            "n_pairs_total": len(doubles_to_score),
+        },
     }
 
 
@@ -266,7 +279,7 @@ def _run_task(args, task: str, rng: random.Random) -> dict[str, object]:
         bins=bins,
     )
 
-    _, prep = _sample_double_mutations(
+    prep = _sample_double_mutations(
         rng=rng,
         wt_sequence=wt_sequence,
         singles=single_records,
@@ -300,9 +313,13 @@ def _run_task(args, task: str, rng: random.Random) -> dict[str, object]:
 
     pair_type_counts: dict[str, int] = {}
     for record in double_records:
-        pair_type_counts[record.pair_type] = pair_type_counts.get(record.pair_type, 0) + 1
+        pair_type_counts[record.pair_type] = (
+            pair_type_counts.get(record.pair_type, 0) + 1
+        )
 
-    epistasis_values = np.asarray([r.epistasis_e_ij for r in double_records], dtype=np.float32)
+    epistasis_values = np.asarray(
+        [r.epistasis_e_ij for r in double_records], dtype=np.float32
+    )
     additive_values = np.asarray(
         [r.additive_delta_fitness for r in double_records], dtype=np.float32
     )
@@ -324,7 +341,9 @@ def _run_task(args, task: str, rng: random.Random) -> dict[str, object]:
         "sampling": {
             "samples_per_pair_type": args.samples_per_pair_type,
             "pair_type_counts": pair_type_counts,
-            "replacement_used": prep["sampling_meta"]["replacement_used"],
+            "replacement_used": cast(
+                dict[str, bool], prep["sampling_meta"]["replacement_used"]
+            ),
         },
         "double_mutant_summary": {
             "epistasis_mean": float(np.mean(epistasis_values)),
@@ -342,7 +361,9 @@ def _run_task(args, task: str, rng: random.Random) -> dict[str, object]:
     }
 
 
-def _plot_scatter_all_tasks(results: list[dict[str, object]], output_path: Path) -> None:
+def _plot_scatter_all_tasks(
+    results: list[dict[str, object]], output_path: Path
+) -> None:
     n_tasks = len(results)
     n_cols = 3
     n_rows = int(math.ceil(n_tasks / n_cols))
@@ -358,8 +379,10 @@ def _plot_scatter_all_tasks(results: list[dict[str, object]], output_path: Path)
     for idx, task_result in enumerate(results):
         ax = axes_flat[idx]
         task = task_result["task"]
-        rows = task_result["double_mutants"]
-        x = np.asarray([row["additive_delta_fitness"] for row in rows], dtype=np.float32)
+        rows = cast(list[dict[str, Any]], task_result["double_mutants"])
+        x = np.asarray(
+            [row["additive_delta_fitness"] for row in rows], dtype=np.float32
+        )
         y = np.asarray([row["delta_fitness_double"] for row in rows], dtype=np.float32)
 
         all_values = np.concatenate([x, y])
@@ -385,13 +408,19 @@ def _plot_scatter_all_tasks(results: list[dict[str, object]], output_path: Path)
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.suptitle(r"Epistasis Additivity per Task ($\Delta_{ij}$ vs $\Delta_i + \Delta_j$)", fontsize=14, y=0.995)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.985])
+    fig.suptitle(
+        r"Epistasis Additivity per Task ($\Delta_{ij}$ vs $\Delta_i + \Delta_j$)",
+        fontsize=14,
+        y=0.995,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.985))
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
 
 
-def _plot_histograms_all_tasks(results: list[dict[str, object]], output_path: Path) -> None:
+def _plot_histograms_all_tasks(
+    results: list[dict[str, object]], output_path: Path
+) -> None:
     n_tasks = len(results)
     n_cols = 3
     n_rows = int(math.ceil(n_tasks / n_cols))
@@ -407,7 +436,7 @@ def _plot_histograms_all_tasks(results: list[dict[str, object]], output_path: Pa
     for idx, task_result in enumerate(results):
         ax = axes_flat[idx]
         task = task_result["task"]
-        rows = task_result["double_mutants"]
+        rows = cast(list[dict[str, Any]], task_result["double_mutants"])
         e_vals = np.asarray([row["epistasis_e_ij"] for row in rows], dtype=np.float32)
         ax.hist(e_vals, bins=35, alpha=0.8, color="#2f5d8a")
         ax.axvline(0.0, linestyle="--", linewidth=1.0, color="black")
@@ -420,7 +449,7 @@ def _plot_histograms_all_tasks(results: list[dict[str, object]], output_path: Pa
         axes_flat[idx].axis("off")
 
     fig.suptitle("Epistasis Distributions per Task", fontsize=14, y=0.995)
-    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.985])
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.985))
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
 
@@ -483,7 +512,9 @@ def main() -> None:
     task_results: list[dict[str, object]] = []
     for task in args.tasks:
         if task not in WT_SEQUENCES:
-            raise ValueError(f"Unknown task {task!r}. Available keys: {sorted(WT_SEQUENCES)}")
+            raise ValueError(
+                f"Unknown task {task!r}. Available keys: {sorted(WT_SEQUENCES)}"
+            )
         print(f"[epistasis] start task={task}")
         task_results.append(_run_task(args, task, rng))
         print(f"[epistasis] done task={task}")

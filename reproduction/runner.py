@@ -9,14 +9,14 @@ from pathlib import Path
 
 from prospero.reproduction.commands import plot_commands, stage_commands
 from prospero.reproduction.types import (
-    AlignmentStage,
+    ScoringBenchmarkStage,
     EpistasisStage,
     ProSperoStage,
     ReproductionContext,
     ReproductionRecipe,
     RuntimeOptions,
     Stage,
-    ZeroShotStage,
+    PlmOptimizationStage,
 )
 
 
@@ -44,7 +44,9 @@ class CommandRunner:
                 stderr=subprocess.STDOUT,
             )
 
-    def write_manifest(self, recipe: ReproductionRecipe, options: RuntimeOptions, stages: list[Stage]) -> None:
+    def write_manifest(
+        self, recipe: ReproductionRecipe, options: RuntimeOptions, stages: list[Stage]
+    ) -> None:
         manifest = self.context.root / "manifest.json"
         payload = {
             "recipe": _json_safe(asdict(recipe)),
@@ -74,28 +76,39 @@ def _filter_tuple(values: tuple, allowed: tuple | None) -> tuple:
 
 
 def apply_filters(stage: Stage, options: RuntimeOptions) -> Stage | None:
-    if options.selected_stages is not None and stage.name not in options.selected_stages:
+    if (
+        options.selected_stages is not None
+        and stage.name not in options.selected_stages
+    ):
         return None
-    if isinstance(stage, ZeroShotStage):
+    if isinstance(stage, PlmOptimizationStage):
         filtered = replace(
             stage,
             tasks=_filter_tuple(stage.tasks, options.task_filter),
             seeds=_filter_tuple(stage.seeds, options.seed_filter),
-            budgets=_filter_tuple(stage.budgets, options.budget_filter),
+            query_budgets=_filter_tuple(stage.query_budgets, options.budget_filter),
         )
-        return filtered if filtered.tasks and filtered.seeds and filtered.budgets else None
+        return (
+            filtered
+            if filtered.tasks and filtered.seeds and filtered.query_budgets
+            else None
+        )
     if isinstance(stage, ProSperoStage):
         filtered = replace(
             stage,
             tasks=_filter_tuple(stage.tasks, options.task_filter),
             seeds=_filter_tuple(stage.seeds, options.seed_filter),
-            budgets=_filter_tuple(stage.budgets, options.budget_filter),
+            query_budgets=_filter_tuple(stage.query_budgets, options.budget_filter),
         )
-        return filtered if filtered.tasks and filtered.seeds and filtered.budgets else None
+        return (
+            filtered
+            if filtered.tasks and filtered.seeds and filtered.query_budgets
+            else None
+        )
     if isinstance(stage, EpistasisStage):
         filtered = replace(stage, tasks=_filter_tuple(stage.tasks, options.task_filter))
         return filtered if filtered.tasks else None
-    if isinstance(stage, AlignmentStage):
+    if isinstance(stage, ScoringBenchmarkStage):
         filtered = replace(stage, tasks=_filter_tuple(stage.tasks, options.task_filter))
         return filtered if filtered.tasks else None
     raise TypeError(type(stage))
@@ -126,23 +139,43 @@ def make_context(options: RuntimeOptions) -> ReproductionContext:
     )
 
 
-def print_plan(context: ReproductionContext, stages: list[Stage], options: RuntimeOptions) -> None:
+def print_plan(
+    context: ReproductionContext, stages: list[Stage], options: RuntimeOptions
+) -> None:
     print(f"[reproduce] root: {context.root}")
     print("[reproduce] stages:")
     for idx, stage in enumerate(stages, start=1):
         if isinstance(stage, ProSperoStage):
-            print(f"  {idx}. {stage.name}: ProSpero CNN, budgets={stage.budgets}, seeds={stage.seeds}, tasks={stage.tasks}")
-        elif isinstance(stage, ZeroShotStage):
-            ft = f"FT {stage.finetune_epochs} epochs, lr={stage.finetune_lr:g}, KL={stage.lambda_kl:g}" if stage.finetune else "no fine-tuning"
             print(
-                f"  {idx}. {stage.name}: {stage.plot_label}, PLM={stage.plm}, vocab={stage.decoding_vocab}, "
-                f"mask=mixed/K{stage.mask_budget}, {ft}, budgets={stage.budgets}, seeds={stage.seeds}, tasks={stage.tasks}"
+                f"  {idx}. {stage.name}: ProSpero CNN, "
+                f"query_budgets={stage.query_budgets}, seeds={stage.seeds}, "
+                f"tasks={stage.tasks}"
+            )
+        elif isinstance(stage, PlmOptimizationStage):
+            if stage.adaptation is None:
+                adaptation = "no online adaptation"
+            else:
+                adaptation = (
+                    f"adaptation={stage.adaptation.epochs} epochs, "
+                    f"lr={stage.adaptation.learning_rate:g}, "
+                    f"KL={stage.adaptation.kl_coefficient:g}"
+                )
+            print(
+                f"  {idx}. {stage.name}: {stage.plot_label}, "
+                f"model={stage.model.value}, "
+                f"vocabulary={stage.decoding_vocabulary.value}, "
+                f"mask_budget={stage.mask_budget}, {adaptation}, "
+                f"query_budgets={stage.query_budgets}, "
+                f"seeds={stage.seeds}, tasks={stage.tasks}"
             )
         elif isinstance(stage, EpistasisStage):
-            print(f"  {idx}. {stage.name}: samples_per_pair_type={stage.samples_per_pair_type}, tasks={stage.tasks}")
-        elif isinstance(stage, AlignmentStage):
             print(
-                f"  {idx}. {stage.name}: PLMs={stage.plms}, n={stage.max_sequences}, "
+                f"  {idx}. {stage.name}: samples_per_pair_type={stage.samples_per_pair_type}, tasks={stage.tasks}"
+            )
+        elif isinstance(stage, ScoringBenchmarkStage):
+            print(
+                f"  {idx}. {stage.name}: models={stage.models}, "
+                f"n={stage.max_sequences}, "
                 f"tasks={stage.tasks}"
             )
     if options.plots_only:
@@ -153,15 +186,27 @@ def print_plan(context: ReproductionContext, stages: list[Stage], options: Runti
         print("[reproduce] dry-run: commands will be printed but not executed")
 
 
-def run_reproduction(recipe: ReproductionRecipe, options: RuntimeOptions) -> ReproductionContext:
+def run_reproduction(
+    recipe: ReproductionRecipe, options: RuntimeOptions
+) -> ReproductionContext:
     context = make_context(options)
-    stages = [stage for stage in (apply_filters(stage, options) for stage in recipe.stages) if stage is not None]
+    stages = [
+        stage
+        for stage in (apply_filters(stage, options) for stage in recipe.stages)
+        if stage is not None
+    ]
     print_plan(context, stages, options)
     runner = CommandRunner(context)
 
     config_path = context.root / "config.json"
     config_path.write_text(
-        json.dumps({"runtime_options": _json_safe(asdict(options)), "stages": [_json_safe(asdict(s)) for s in stages]}, indent=2),
+        json.dumps(
+            {
+                "runtime_options": _json_safe(asdict(options)),
+                "stages": [_json_safe(asdict(s)) for s in stages],
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

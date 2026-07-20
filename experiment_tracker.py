@@ -6,8 +6,11 @@ import itertools
 def mean_novelty(seqs, ref_seqs):
     novelties = []
     for seq in seqs:
-        novelties.append(np.min([edit_dist(*pair) for pair in itertools.product([seq], ref_seqs)]))
+        novelties.append(
+            np.min([edit_dist(*pair) for pair in itertools.product([seq], ref_seqs)])
+        )
     return np.mean(novelties)
+
 
 def mean_pairwise_distances(seqs):
     dists = []
@@ -15,15 +18,19 @@ def mean_pairwise_distances(seqs):
         dists.append(edit_dist(*pair))
     return np.mean(dists)
 
+
 def edit_dist(seq1, seq2):
-    return sum([x!=y for x, y in zip(seq1, seq2)])
-    
+    return sum([x != y for x, y in zip(seq1, seq2)])
 
 
 class ExperimentTracker:
     def __init__(self, logger, dataset, wt_sequence=None, best_percentile=0.95):
         self.logger = logger
-        self.train_sequences = dataset.train if wt_sequence is None else self.get_best_sequences(dataset, best_percentile)
+        self.train_sequences = (
+            dataset.train
+            if wt_sequence is None
+            else self.get_best_sequences(dataset, best_percentile)
+        )
         self.wt_sequence = wt_sequence
         self.collected_sequences = list()
         self.collected_scores = list()
@@ -52,7 +59,7 @@ class ExperimentTracker:
             wt_novelty = mean_novelty(top_sequences, [self.wt_sequence])
         top_performances_median = np.percentile(top_scores, 50)
         best_score = np.max(self.collected_scores)
-        
+
         self.logger.info(
             f"Top {n} collected scores after iteration {n_iter}: | Performance: {top_performances} | Diversity: {top_distances} | Novelty: {top_novelties} | WT Novelty: {wt_novelty if self.wt_sequence is not None else None} | Best Score: {best_score} | Performance median: {top_performances_median}"
         )
@@ -67,7 +74,7 @@ class ExperimentTracker:
             "Best score": best_score,
             "Median performance": top_performances_median,
             "Iter sequences": iter_sequences,
-            "Iter scores": iter_scores
+            "Iter scores": iter_scores,
         }
 
     def save_results(self, path):
@@ -78,4 +85,3 @@ class ExperimentTracker:
         if n_iter not in self.exp_results:
             raise KeyError(f"Iteration {n_iter} is missing from exp_results.")
         self.exp_results[n_iter]["Surrogate"] = artifacts
-            

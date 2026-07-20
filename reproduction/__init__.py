@@ -1,19 +1,25 @@
 from prospero.reproduction.runner import run_reproduction
 from prospero.reproduction.types import (
-    AlignmentStage,
+    DecodingVocabulary,
+    ScoringBenchmarkStage,
     EpistasisStage,
     ProSperoStage,
+    ProteinLanguageModel,
     ReproductionRecipe,
     RuntimeOptions,
-    ZeroShotStage,
+    PlmOptimizationStage,
 )
+from prospero.optimization.types import OnlineAdaptationConfig
 
 __all__ = [
-    "AlignmentStage",
+    "DecodingVocabulary",
     "EpistasisStage",
+    "OnlineAdaptationConfig",
+    "PlmOptimizationStage",
     "ProSperoStage",
+    "ProteinLanguageModel",
     "ReproductionRecipe",
     "RuntimeOptions",
-    "ZeroShotStage",
+    "ScoringBenchmarkStage",
     "run_reproduction",
 ]

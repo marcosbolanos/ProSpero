@@ -2,21 +2,26 @@ import gzip
 import json
 import os
 from pathlib import Path
+from typing import TextIO
 
 
 class JsonlGzTraceWriter:
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = gzip.open(self.path, "at", encoding="utf-8")
+        self.handle: TextIO | None = gzip.open(self.path, "at", encoding="utf-8")
         self.event_counts = {}
         self.n_events = 0
 
     def write(self, record):
+        if self.handle is None:
+            raise RuntimeError("Cannot write to a closed trace.")
         event = record.get("event", "unknown")
         self.event_counts[event] = self.event_counts.get(event, 0) + 1
         self.n_events += 1
-        self.handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        self.handle.write(
+            json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+        )
 
     def close(self):
         if self.handle is not None:

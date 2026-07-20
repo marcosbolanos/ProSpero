@@ -47,17 +47,21 @@ def corr(x, y):
 
 def plot_scatter(results):
     set_prospero_style()
-    plt.rcParams.update({
-        "axes.titlesize": 30,
-        "axes.labelsize": 26,
-        "xtick.labelsize": 22,
-        "ytick.labelsize": 22,
-        "legend.fontsize": 24,
-    })
+    plt.rcParams.update(
+        {
+            "axes.titlesize": 30,
+            "axes.labelsize": 26,
+            "xtick.labelsize": 22,
+            "ytick.labelsize": 22,
+            "legend.fontsize": 24,
+        }
+    )
     n_tasks = len(results)
     n_cols = 2
     n_rows = int(math.ceil(n_tasks / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(24.0, 7.2 * n_rows), sharex=False, sharey=False)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(24.0, 7.2 * n_rows), sharex=False, sharey=False
+    )
     axes_flat = np.atleast_1d(axes).reshape(-1)
 
     for idx, task_result in enumerate(results):
@@ -67,8 +71,17 @@ def plot_scatter(results):
         x = np.asarray([row["additive_delta_fitness"] for row in rows], dtype=float)
         y = np.asarray([row["delta_fitness_double"] for row in rows], dtype=float)
         lim_lo, lim_hi = robust_limits(x, y)
-        ax.scatter(x, y, s=13, alpha=0.9, color="#2F5D8A", edgecolors="none", rasterized=True)
-        ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], linestyle="--", linewidth=1.35, color=COLORS["ink"], alpha=0.8)
+        ax.scatter(
+            x, y, s=13, alpha=0.9, color="#2F5D8A", edgecolors="none", rasterized=True
+        )
+        ax.plot(
+            [lim_lo, lim_hi],
+            [lim_lo, lim_hi],
+            linestyle="--",
+            linewidth=1.35,
+            color=COLORS["ink"],
+            alpha=0.8,
+        )
         ax.set_xlim(lim_lo, lim_hi)
         ax.set_ylim(lim_lo, lim_hi)
         ax.set_title(task, loc="left", pad=6)
@@ -89,7 +102,9 @@ def plot_scatter(results):
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.97, wspace=0.42, hspace=0.52)
+    fig.subplots_adjust(
+        left=0.105, right=0.985, bottom=0.06, top=0.97, wspace=0.42, hspace=0.52
+    )
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_additivity_oracle_scatter.png"
     pdf = OUT / "epistasis_additivity_oracle_scatter.pdf"
@@ -101,16 +116,20 @@ def plot_scatter(results):
 
 def plot_histograms(results):
     set_prospero_style()
-    plt.rcParams.update({
-        "axes.titlesize": 30,
-        "axes.labelsize": 26,
-        "xtick.labelsize": 22,
-        "ytick.labelsize": 22,
-    })
+    plt.rcParams.update(
+        {
+            "axes.titlesize": 30,
+            "axes.labelsize": 26,
+            "xtick.labelsize": 22,
+            "ytick.labelsize": 22,
+        }
+    )
     n_tasks = len(results)
     n_cols = 2
     n_rows = int(math.ceil(n_tasks / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(24.0, 6.9 * n_rows), sharex=False, sharey=False)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(24.0, 6.9 * n_rows), sharex=False, sharey=False
+    )
     axes_flat = np.atleast_1d(axes).reshape(-1)
 
     for idx, task_result in enumerate(results):
@@ -149,7 +168,9 @@ def plot_histograms(results):
     for idx in range(n_tasks, len(axes_flat)):
         axes_flat[idx].axis("off")
 
-    fig.subplots_adjust(left=0.105, right=0.985, bottom=0.06, top=0.93, wspace=0.38, hspace=0.50)
+    fig.subplots_adjust(
+        left=0.105, right=0.985, bottom=0.06, top=0.93, wspace=0.38, hspace=0.50
+    )
     OUT.mkdir(parents=True, exist_ok=True)
     png = OUT / "epistasis_distributions_oracle_histograms.png"
     pdf = OUT / "epistasis_distributions_oracle_histograms.pdf"
@@ -160,7 +181,9 @@ def plot_histograms(results):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Plot epistasis/additivity oracle results.")
+    parser = argparse.ArgumentParser(
+        description="Plot epistasis/additivity oracle results."
+    )
     parser.add_argument("--source", default=str(SOURCE))
     parser.add_argument("--output-dir", default=str(OUT))
     return parser.parse_args()
@@ -176,7 +199,13 @@ def main():
     written.extend(plot_scatter(results))
     written.extend(plot_histograms(results))
     summary = OUT / "plot_summary.txt"
-    summary.write_text("Source: " + str(SOURCE) + "\nWritten:\n" + "\n".join(str(p) for p in written) + "\n")
+    summary.write_text(
+        "Source: "
+        + str(SOURCE)
+        + "\nWritten:\n"
+        + "\n".join(str(p) for p in written)
+        + "\n"
+    )
     print(f"Wrote {len(written)} plot files")
     print(summary)
     for path in written:

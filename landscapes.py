@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 
 class AAVLandscape:
-
     def __init__(
         self,
         oracle_path: str,
@@ -26,7 +25,7 @@ class AAVLandscape:
         self.start = start
         self.end = end
         self.noise = noise
-        self.wild_type = 'PSGTTTQSRLQFSQAGASDIRDQSRNWLPGPCYRQQRVSKTSADNNNSEYSWTGATKYHLNGRDSLVNPGPAMASHKDDEEKFFPQSGVL'
+        self.wild_type = "PSGTTTQSRLQFSQAGASDIRDQSRNWLPGPCYRQQRVSKTSADNNNSEYSWTGATKYHLNGRDSLVNPGPAMASHKDDEEKFFPQSGVL"
 
         with open(oracle_path) as f:
             self.data = {
@@ -79,15 +78,17 @@ class AAVLandscape:
 
 class TAPELandscape:
     """
-        A TAPE-based oracle model to simulate protein fitness landscape.
+    A TAPE-based oracle model to simulate protein fitness landscape.
     """
-    
+
     def __init__(self, task):
         task_dir_path = os.path.join(ORACLES_PATH, task)
         print(task_dir_path)
-        assert os.path.exists(os.path.join(task_dir_path, 'pytorch_model.bin'))
-        self.model = tape.ProteinBertForValuePrediction.from_pretrained(task_dir_path)        
-        self.tokenizer = tape.TAPETokenizer(vocab='iupac')
+        assert os.path.exists(os.path.join(task_dir_path, "pytorch_model.bin"))
+        self.model = tape.ProteinBertForValuePrediction.from_pretrained(  # type: ignore[attr-defined]
+            task_dir_path
+        )
+        self.tokenizer = tape.TAPETokenizer(vocab="iupac")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.to(self.device)
         self.model.eval()
@@ -104,17 +105,25 @@ class TAPELandscape:
             ).to(self.device)
 
             scores.append(
-                self.model(encoded_seqs)[0].detach().cpu().numpy().astype(float).reshape(-1)
+                self.model(encoded_seqs)[0]
+                .detach()
+                .cpu()
+                .numpy()
+                .astype(float)
+                .reshape(-1)
             )
 
         return np.concatenate(scores)
-    
+
 
 class NoisyLandscape:
     def __init__(self, ensemble_size, snr, signal_variance):
         noise_std = self.calculate_noise_std(snr, signal_variance)
         self.oracle = [
-            AAVLandscape(os.path.join(ORACLES_PATH, "AAV2_single_subs-2.json"), noise=noise_std) for _ in range(ensemble_size)
+            AAVLandscape(
+                os.path.join(ORACLES_PATH, "AAV2_single_subs-2.json"), noise=noise_std
+            )
+            for _ in range(ensemble_size)
         ]
 
     def calculate_noise_std(self, snr, signal_variance):
@@ -122,7 +131,9 @@ class NoisyLandscape:
         return np.sqrt(noise_var)
 
     def _call_models(self, sequences):
-        return torch.stack([torch.Tensor(o.get_fitness(sequences)) for o in self.oracle])
+        return torch.stack(
+            [torch.Tensor(o.get_fitness(sequences)) for o in self.oracle]
+        )
 
     def get_fitness(self, sequences):
         outputs = self._call_models(sequences)
@@ -147,7 +158,6 @@ def get_landscape(task):
         return ESMFoldLandscape()
     else:
         return TAPELandscape(task)
-    
 
 
 class ESMFoldLandscape:
@@ -157,20 +167,25 @@ class ESMFoldLandscape:
     def load_model(self):
         tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
         try:
-            model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True, use_safetensors=True)
+            model = EsmForProteinFolding.from_pretrained(
+                "facebook/esmfold_v1", low_cpu_mem_usage=True, use_safetensors=True
+            )
         except OSError:
-            model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True, use_safetensors=False)
-        model = model.cuda()
+            model = EsmForProteinFolding.from_pretrained(
+                "facebook/esmfold_v1", low_cpu_mem_usage=True, use_safetensors=False
+            )
+        model = torch.nn.Module.to(model, "cuda")
         return model, tokenizer
-    
+
     @torch.no_grad()
     def get_fitness(self, sequences):
         outputs = []
-        seqs_tokenized = self.tokenizer(sequences, padding=False, add_special_tokens=False)["input_ids"]
+        seqs_tokenized = self.tokenizer(
+            sequences, padding=False, add_special_tokens=False
+        )["input_ids"]
         for input_ids in tqdm(seqs_tokenized):
-            input_ids = torch.tensor(input_ids, device='cuda').unsqueeze(0)
+            input_ids = torch.tensor(input_ids, device="cuda").unsqueeze(0)
             output = self.model(input_ids)
             outputs.append({key: val.cpu() for key, val in output.items()})
         ptms = [pred["ptm"].item() for pred in outputs]
         return np.array(ptms)
-    

@@ -11,13 +11,31 @@ def parse_runtime_options(default_stage_names: tuple[str, ...]) -> RuntimeOption
         description="Reproduce paper-relevant ProSpero/0shotProt runs and plots into outputs/reproduction/<timestamp>.",
     )
     parser.add_argument("--output-root", default="outputs/reproduction")
-    parser.add_argument("--timestamp", default=None, help="Override timestamp folder name.")
-    parser.add_argument("--tasks", nargs="+", default=None, help="Optional task filter.")
-    parser.add_argument("--seeds", nargs="+", type=int, default=None, help="Optional seed filter.")
-    parser.add_argument("--budgets", nargs="+", type=int, default=None, help="Optional query-budget filter.")
-    parser.add_argument("--gpu", default=None, help="Optional CUDA_VISIBLE_DEVICES value, preferably a GPU UUID.")
+    parser.add_argument(
+        "--timestamp", default=None, help="Override timestamp folder name."
+    )
+    parser.add_argument(
+        "--tasks", nargs="+", default=None, help="Optional task filter."
+    )
+    parser.add_argument(
+        "--seeds", nargs="+", type=int, default=None, help="Optional seed filter."
+    )
+    parser.add_argument(
+        "--budgets",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Optional query-budget filter.",
+    )
+    parser.add_argument(
+        "--gpu",
+        default=None,
+        help="Optional CUDA_VISIBLE_DEVICES value, preferably a GPU UUID.",
+    )
     parser.add_argument("--skip-existing", action="store_true", default=True)
-    parser.add_argument("--no-skip-existing", dest="skip_existing", action="store_false")
+    parser.add_argument(
+        "--no-skip-existing", dest="skip_existing", action="store_false"
+    )
     parser.add_argument("--plots-only", action="store_true", default=False)
     parser.add_argument("--no-plots", action="store_true", default=False)
     parser.add_argument("--dry-run", action="store_true", default=False)
