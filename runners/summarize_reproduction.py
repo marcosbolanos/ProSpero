@@ -52,7 +52,11 @@ def summarize_paths(paths: list[Path]) -> tuple[float, float, int]:
 
 def result_paths(results: Path, method: str, task: str, budget: int) -> list[Path]:
     if method == "prospero_cnn":
-        root = results / "prospero" / f"{task}_cnn" / f"k_{budget}" / task
+        method_root = results / "prospero" / f"{task}_cnn"
+        budget_root = method_root / f"n_samples_{budget}"
+        if not budget_root.exists():
+            budget_root = method_root / f"k_{budget}"
+        root = budget_root / task
     else:
         root = results / method / f"k_{budget}" / task
     return sorted(root.glob("seed_*.pkl"))

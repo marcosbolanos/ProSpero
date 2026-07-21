@@ -48,7 +48,11 @@ def seed_paths(
             return []
         return sorted((evodiff_roots[budget] / task).glob("seed_*.pkl"))
     if method.root_kind == "prospero":
-        return sorted((prospero_roots[task] / f"k_{budget}" / task).glob("seed_*.pkl"))
+        root = prospero_roots[task]
+        budget_root = root / f"n_samples_{budget}"
+        if not budget_root.exists():
+            budget_root = root / f"k_{budget}"
+        return sorted((budget_root / task).glob("seed_*.pkl"))
     raise ValueError(method.root_kind)
 
 
