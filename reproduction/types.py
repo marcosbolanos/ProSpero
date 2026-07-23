@@ -40,7 +40,7 @@ class PlmOptimizationStage:
     mask_budget: int = 4
     rounds: int = 10
     candidate_batch_size: int = 64
-    structure_tokens_directory: str = "outputs/prosst_structure_tokens"
+    structure_tokens_directory: str = "assets/prosst_structure_tokens"
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class ScoringBenchmarkStage:
     seed: int = 142857
     esm_model: str = "facebook/esm2_t33_650M_UR50D"
     prosst_model: str = "AI4Protein/ProSST-2048"
-    structure_tokens_directory: str = "outputs/prosst_structure_tokens"
+    structure_tokens_directory: str = "assets/prosst_structure_tokens"
 
 
 @dataclass(frozen=True)

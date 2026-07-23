@@ -58,7 +58,7 @@ def get_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--structure-tokens-directory",
         dest="structure_tokens_directory",
-        default="outputs/prosst_structure_tokens",
+        default="assets/prosst_structure_tokens",
     )
     return p
 

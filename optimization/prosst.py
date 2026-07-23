@@ -21,7 +21,7 @@ from prospero.optimization.core import (
 from prospero.optimization.types import ProSSTConfig
 
 
-STRUCTURE_TOKENS_DIR = Path("outputs/prosst_structure_tokens")
+STRUCTURE_TOKENS_DIR = Path("assets/prosst_structure_tokens")
 
 
 @dataclass(frozen=True)
